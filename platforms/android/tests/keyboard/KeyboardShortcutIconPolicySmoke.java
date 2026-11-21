@@ -35,6 +35,14 @@ public final class KeyboardShortcutIconPolicySmoke {
             "长空格布局的顶栏符号入口");
         check(KeyboardShortcutIconPolicy.forLabel("随") == Icon.RANDOM_DIGITS
             && !KeyboardShortcutIconPolicy.materialGlyph(Icon.RANDOM_DIGITS), "随机数字使用汉字图标");
+        check(KeyboardShortcutIconPolicy.forLabel("笔划输入法") == Icon.STROKE
+            && KeyboardShortcutIconPolicy.forLabel("拼音输入法") == Icon.PINYIN
+            && KeyboardShortcutIconPolicy.forLabel("英文输入法") == Icon.ENGLISH,
+            "快速切换输入方案图标映射");
+        check(!KeyboardShortcutIconPolicy.materialGlyph(Icon.STROKE)
+            && !KeyboardShortcutIconPolicy.materialGlyph(Icon.PINYIN)
+            && !KeyboardShortcutIconPolicy.materialGlyph(Icon.ENGLISH),
+            "快速切换输入方案使用文字图标");
         for (Icon icon : new Icon[] {Icon.EMOJI, Icon.PHRASE, Icon.CLIPBOARD, Icon.SKIN,
                 Icon.SCHEME, Icon.FLOATING, Icon.TEXT_EDIT, Icon.DISMISS}) {
             check(KeyboardShortcutIconPolicy.materialGlyph(icon), "material toolbar glyph " + icon);

@@ -140,14 +140,22 @@ public final class KeyboardShortcutButton extends KeyboardPressButton {
             case DISMISS -> drawDismiss(canvas);
             case GLOBE -> drawGlobe(canvas);
             case BOOKMARK -> drawBookmark(canvas);
-            case SYMBOL, RANDOM_DIGITS -> {
+            case SYMBOL, RANDOM_DIGITS, STROKE, PINYIN, ENGLISH -> {
                 glyph.setColor(color);
                 glyph.setAlpha(ColorPolicy.enabledAlpha(isEnabled(), 255, 96));
                 glyph.setStyle(Paint.Style.FILL);
                 glyph.setTextAlign(Paint.Align.CENTER);
-                glyph.setTextSize(74f);
+                glyph.setTextSize(icon == KeyboardShortcutIconPolicy.Icon.ENGLISH ? 58f : 74f);
                 glyph.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-                canvas.drawText(icon == KeyboardShortcutIconPolicy.Icon.SYMBOL ? "符" : "随", 50f, 75f, glyph);
+                String label = switch (icon) {
+                    case SYMBOL -> "符";
+                    case RANDOM_DIGITS -> "随";
+                    case STROKE -> "笔";
+                    case PINYIN -> "拼";
+                    case ENGLISH -> "EN";
+                    default -> "";
+                };
+                canvas.drawText(label, 50f, 75f, glyph);
             }
             case UNDO, REDO -> {
                 if (icon == KeyboardShortcutIconPolicy.Icon.REDO) {
@@ -189,7 +197,8 @@ public final class KeyboardShortcutButton extends KeyboardPressButton {
             case FLOATING -> KeyboardIconPaths.Icon.TOOLBAR_FLOATING;
             // 和功能面板「文本编辑」磁贴同一个图标，用户在两处认得出是同一个面板。
             case TEXT_EDIT -> KeyboardIconPaths.Icon.TEXT_EDIT;
-            case DISMISS, SETTINGS, REPLY, VOICE, GLOBE, BOOKMARK, UNDO, REDO, SYMBOL, RANDOM_DIGITS ->
+            case DISMISS, SETTINGS, REPLY, VOICE, GLOBE, BOOKMARK, UNDO, REDO, SYMBOL, RANDOM_DIGITS,
+                STROKE, PINYIN, ENGLISH ->
                 KeyboardIconPaths.Icon.TOOLBAR_DISMISS;
         };
         float iconDp = icon == KeyboardShortcutIconPolicy.Icon.DISMISS

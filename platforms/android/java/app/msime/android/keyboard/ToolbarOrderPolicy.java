@@ -23,7 +23,10 @@ public final class ToolbarOrderPolicy {
         /** 语音按钮的开关不在 `touch_toolbar` 里，是共享偏好顶层的 `touch_voice_shortcut`（「键盘 → 工具栏 → 语音」和键盘内「顶部语音入口」写这一项，语音页选「无」时关掉它，#10309），默认关。旧版本存下的顺序里没有它，`parse` 把它补在末尾（#10142）。 */
         VOICE("voice", "语音", VOICE_SHORTCUT_PREFERENCE),
         RANDOM_DIGITS("random_digits", "随机数字", AndroidLocalSettings.TOOLBAR_RANDOM_DIGITS),
-        DISMISS("dismiss", "收起键盘", AndroidLocalSettings.TOOLBAR_DISMISS);
+        DISMISS("dismiss", "收起键盘", AndroidLocalSettings.TOOLBAR_DISMISS),
+        STROKE("stroke", "笔划输入法", AndroidLocalSettings.TOOLBAR_STROKE),
+        PINYIN("pinyin", "拼音输入法", AndroidLocalSettings.TOOLBAR_PINYIN),
+        ENGLISH("english", "英文输入法", AndroidLocalSettings.TOOLBAR_ENGLISH);
 
         public final String id;
         public final String label;

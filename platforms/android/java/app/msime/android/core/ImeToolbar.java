@@ -70,7 +70,8 @@ final class ImeToolbar {
         s.shortcutBar.removeAllViews();
         s.dismissShortcutButton = dismissButton;
         shortcutButtons = new Button[] {s.emojiShortcutButton, s.phraseShortcutButton,
-            s.clipboardShortcutButton, s.skinButton, s.schemeButton, s.floatingShortcutButton,
+            s.clipboardShortcutButton, s.skinButton, s.schemeButton, s.strokeShortcutButton,
+            s.pinyinShortcutButton, s.englishShortcutButton, s.floatingShortcutButton,
             s.textEditShortcutButton, s.undoShortcutButton, s.redoShortcutButton, s.voiceShortcutButton,
             s.randomDigitsShortcutButton, dismissButton};
         for (Button button : shortcutButtons) bindEditor(button);
@@ -292,6 +293,9 @@ final class ImeToolbar {
             case CLIPBOARD -> s.clipboardShortcutButton;
             case SKIN -> s.skinButton;
             case SCHEME -> s.schemeButton;
+            case STROKE -> s.strokeShortcutButton;
+            case PINYIN -> s.pinyinShortcutButton;
+            case ENGLISH -> s.englishShortcutButton;
             case FLOATING -> s.floatingShortcutButton;
             case TEXT_EDIT -> s.textEditShortcutButton;
             case UNDO -> s.undoShortcutButton;

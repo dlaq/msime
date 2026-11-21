@@ -400,6 +400,9 @@ public final class MSIMEInputService extends InputMethodService {
     private JSONObject localModes = new JSONObject();
     Button moreButton;
     Button schemeButton;
+    Button strokeShortcutButton;
+    Button pinyinShortcutButton;
+    Button englishShortcutButton;
     /** 工具栏上的「浮动键盘」按钮（本地设置 TOOLBAR_FLOATING，默认不显示）。 */
     Button floatingShortcutButton;
     Button textEditShortcutButton;
@@ -459,6 +462,9 @@ public final class MSIMEInputService extends InputMethodService {
     boolean toolbarClipboard = true;
     boolean toolbarSkin = true;
     boolean toolbarScheme = true;
+    boolean toolbarStroke;
+    boolean toolbarPinyin;
+    boolean toolbarEnglish;
     boolean toolbarHidden;
     /** 剪贴板面板一行排几条，来自本地设置 `platform.android.clipboard_columns`。 */
     int clipboardColumns = 1;
@@ -3295,7 +3301,8 @@ public final class MSIMEInputService extends InputMethodService {
     boolean toolbarRowHidden() {
         if (longSpaceToolbarRowKept()) return false;
         return toolbarHidden || !(toolbarEmoji || toolbarPhrase || toolbarClipboard || toolbarSkin
-            || toolbarScheme || toolbarFloating || toolbarTextEdit || toolbarUndo || toolbarRedo
+            || toolbarScheme || toolbarStroke || toolbarPinyin || toolbarEnglish
+            || toolbarFloating || toolbarTextEdit || toolbarUndo || toolbarRedo
             || imeLayoutRows.randomDigitsKeepsToolbarRow() || touchVoiceShortcutEnabled || toolbarDismiss
             || imeToolbar != null && imeToolbar.pinnedItem() != ToolbarOrderPolicy.Item.DISMISS);
     }
@@ -3338,6 +3345,9 @@ public final class MSIMEInputService extends InputMethodService {
     private void applyLocalSettings() {
         toolbarPhrase = localSettings.bool(AndroidLocalSettings.TOOLBAR_PHRASE);
         toolbarScheme = localSettings.bool(AndroidLocalSettings.TOOLBAR_SCHEME);
+        toolbarStroke = localSettings.bool(AndroidLocalSettings.TOOLBAR_STROKE);
+        toolbarPinyin = localSettings.bool(AndroidLocalSettings.TOOLBAR_PINYIN);
+        toolbarEnglish = localSettings.bool(AndroidLocalSettings.TOOLBAR_ENGLISH);
         toolbarHidden = localSettings.bool(AndroidLocalSettings.TOOLBAR_HIDDEN);
         clipboardColumns = ClipboardLayoutPolicy.columns(
             localSettings.choice(AndroidLocalSettings.CLIPBOARD_COLUMNS));
@@ -8908,6 +8918,38 @@ public final class MSIMEInputService extends InputMethodService {
         render();
     }
 
+    /** 工具栏上的直接方案切换按钮：不要求方案已经出现在「输入方式」面板里，但必须是本版本提供且词典已安装。 */
+    private boolean quickSchemeAvailable(KeyboardScheme scheme) {
+        return scheme.offeredBy(edition) && scheme.installed(languageDictionaries, resourcePacks);
+    }
+
+    /** 直接切换方案时复用输入方式保存的就绪条件，避免按钮在会话或偏好尚未准备好时静默无效。 */
+    private boolean quickSchemeReady(KeyboardScheme scheme) {
+        return quickSchemeAvailable(scheme) && session != 0 && preferencesSnapshot != null
+            && !schemeSaving && !touchGeometrySaving && !traditionalOutputSaving;
+    }
+
+    private void renderQuickSchemeShortcut(Button button, boolean toolbarEnabled,
+            ToolbarOrderPolicy.Item item, KeyboardScheme scheme, String title) {
+        if (button == null) return;
+        boolean available = quickSchemeAvailable(scheme);
+        boolean selected = available && !dedicatedEnglish && selectedScheme == scheme;
+        ViewPolicy.setVisible(button, toolbarItemVisible(toolbarEnabled, item));
+        ViewPolicy.setEnabled(button, quickSchemeReady(scheme));
+        ViewPolicy.setSelected(button, selected);
+        button.setContentDescription(available
+            ? (selected ? "当前为" + title : "切换到" + title)
+            : title + "不可用，请先下载对应词库");
+        if (Build.VERSION.SDK_INT >= 30) {
+            String state = !available ? "词库未安装"
+                : session == 0 ? "输入会话未就绪"
+                : preferencesSnapshot == null ? "设置加载中"
+                : schemeSaving ? "正在切换输入方案"
+                : selected ? "当前方案" : "可用";
+            button.setStateDescription(state);
+        }
+    }
+
     void selectEnglishScheme() {
         if (schemeSaving || touchGeometrySaving || traditionalOutputSaving || session == 0) return;
         if (!dedicatedEnglish) toggleInputLanguage();
@@ -11409,6 +11451,17 @@ public final class MSIMEInputService extends InputMethodService {
             deferrablePanelToggle(ToolbarOrderPolicy.Item.SCHEME,
                 imeToolbar.panelToggle(() -> schemeScroll, imePanels::showSchemePicker)));
         schemeButton.setContentDescription("输入方案");
+        strokeShortcutButton = shortcutButton(controls, "笔划",
+            KeyboardShortcutIconPolicy.Icon.STROKE,
+            () -> selectKeyboardScheme(KeyboardScheme.STROKE));
+        strokeShortcutButton.setContentDescription("切换到笔划输入法");
+        pinyinShortcutButton = shortcutButton(controls, "拼",
+            KeyboardShortcutIconPolicy.Icon.PINYIN,
+            () -> selectKeyboardScheme(KeyboardScheme.QUANPIN));
+        pinyinShortcutButton.setContentDescription("切换到拼音输入法");
+        englishShortcutButton = shortcutButton(controls, "EN",
+            KeyboardShortcutIconPolicy.Icon.ENGLISH, this::selectEnglishScheme);
+        englishShortcutButton.setContentDescription("切换到英文输入法");
         skinButton = shortcutButton(controls, "皮肤",
             KeyboardShortcutIconPolicy.Icon.SKIN,
             deferrablePanelToggle(ToolbarOrderPolicy.Item.SKIN,
@@ -13081,6 +13134,21 @@ public final class MSIMEInputService extends InputMethodService {
                     : "可用";
                 schemeButton.setStateDescription(schemeState);
             }
+        }
+        renderQuickSchemeShortcut(strokeShortcutButton, toolbarStroke,
+            ToolbarOrderPolicy.Item.STROKE, KeyboardScheme.STROKE, "笔划输入法");
+        renderQuickSchemeShortcut(pinyinShortcutButton, toolbarPinyin,
+            ToolbarOrderPolicy.Item.PINYIN, KeyboardScheme.QUANPIN, "拼音输入法");
+        if (englishShortcutButton != null) {
+            ViewPolicy.setVisible(englishShortcutButton,
+                toolbarItemVisible(toolbarEnglish, ToolbarOrderPolicy.Item.ENGLISH));
+            boolean selected = dedicatedEnglish;
+            ViewPolicy.setSelected(englishShortcutButton, selected);
+            boolean ready = session != 0 && !schemeSaving && !touchGeometrySaving && !traditionalOutputSaving;
+            ViewPolicy.setEnabled(englishShortcutButton, ready);
+            englishShortcutButton.setContentDescription(selected ? "当前为英文输入法" : "切换到英文输入法");
+            if (Build.VERSION.SDK_INT >= 30)
+                englishShortcutButton.setStateDescription(ready ? (selected ? "当前模式" : "可用") : "输入会话未就绪");
         }
         if (skinButton != null) {
             ViewPolicy.setVisible(skinButton, toolbarItemVisible(toolbarSkin, ToolbarOrderPolicy.Item.SKIN));

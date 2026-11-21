@@ -134,6 +134,10 @@ public final class AndroidLocalSettings {
     public static final String HARDWARE_CARET_CANDIDATES = "platform.android.hardware_caret_candidates";
     /** 工具栏上的「浮动键盘」按钮，默认不显示；同步的工具栏开关表在 Rust 的 `ANDROID_LOCAL_SETTINGS` 里，这一项先只在本机。 */
     public static final String TOOLBAR_FLOATING = "platform.android.toolbar_floating";
+    /** 工具栏上的笔划、拼音和英文快捷按钮，默认不显示，只在本机保存。 */
+    public static final String TOOLBAR_STROKE = "platform.android.toolbar_stroke";
+    public static final String TOOLBAR_PINYIN = "platform.android.toolbar_pinyin";
+    public static final String TOOLBAR_ENGLISH = "platform.android.toolbar_english";
     /** 可选工具按钮的稳定 ID 排列，只在本机保存。 */
     public static final String TOOLBAR_ORDER = "platform.android.toolbar_order";
     /** 工具栏右侧常驻按钮的稳定 ID，默认是收起键盘，只在本机保存。 */
@@ -308,6 +312,9 @@ public final class AndroidLocalSettings {
             FloatingKeyboardPolicy.MAX_FRACTION, 1);
         bool(HARDWARE_CARET_CANDIDATES, false, false);
         bool(TOOLBAR_FLOATING, false, false);
+        bool(TOOLBAR_STROKE, false, false);
+        bool(TOOLBAR_PINYIN, false, false);
+        bool(TOOLBAR_ENGLISH, false, false);
         bool(TOOLBAR_TEXT_EDIT, false, false);
         bool(TOOLBAR_RANDOM_DIGITS, false, false);
         text(TOOLBAR_ORDER, ToolbarOrderPolicy.format(ToolbarOrderPolicy.DEFAULT_ORDER), false,

@@ -384,7 +384,14 @@ public class KeyboardOptionsPage extends ReloadingDetailPage {
                 ? "由当前应用处理；部分输入框不支持，密码框不可用"
                 : button == ToolbarOrderPolicy.Item.VOICE ? VOICE_TOGGLE_DESCRIPTION
                 : button == ToolbarOrderPolicy.Item.RANDOM_DIGITS
-                    ? "在中文工具栏显示“随”开关；点按后打乱数字九宫格，每输入一个数字重新排列" : null;
+                    ? "在中文工具栏显示“随”开关；点按后打乱数字九宫格，每输入一个数字重新排列"
+                : button == ToolbarOrderPolicy.Item.STROKE
+                    ? "直接切换到笔划输入法；需要先安装笔画词库"
+                : button == ToolbarOrderPolicy.Item.PINYIN
+                    ? "直接切换到全拼 26 键"
+                : button == ToolbarOrderPolicy.Item.ENGLISH
+                    ? "直接切换到英文输入"
+                    : null;
             boolean isPinned = button.id.equals(pinned);
             GroupCard.Row row = bar.toggle(button.label, null, isPinned || toolbarButton(preferences, settings, member),
                 checked -> saveToolbar(member, checked)).help(description);

@@ -7,7 +7,7 @@ public final class KeyboardShortcutIconPolicy {
      *
      * <p>`PHRASE`、`CLIPBOARD`、`SCHEME` 是新设计工具栏上的常用语、剪贴板、输入方式；它们与 `EMOJI`、`SKIN`、`DISMISS` 一起由 {@link KeyboardShortcutButton} 按设计的 Material 实心图标绘制。
      */
-    public enum Icon { SETTINGS, REPLY, EMOJI, VOICE, SKIN, DISMISS, GLOBE, BOOKMARK, PHRASE, CLIPBOARD, SCHEME, FLOATING, TEXT_EDIT, UNDO, REDO, SYMBOL, RANDOM_DIGITS }
+    public enum Icon { SETTINGS, REPLY, EMOJI, VOICE, SKIN, DISMISS, GLOBE, BOOKMARK, PHRASE, CLIPBOARD, SCHEME, FLOATING, TEXT_EDIT, UNDO, REDO, SYMBOL, RANDOM_DIGITS, STROKE, PINYIN, ENGLISH }
 
     private KeyboardShortcutIconPolicy() {}
 
@@ -29,6 +29,9 @@ public final class KeyboardShortcutIconPolicy {
             case "重做" -> Icon.REDO;
             case "符" -> Icon.SYMBOL;
             case "随", "随机数字" -> Icon.RANDOM_DIGITS;
+            case "笔划", "笔划输入法", "笔画", "笔画输入法" -> Icon.STROKE;
+            case "拼", "拼音", "拼音输入法" -> Icon.PINYIN;
+            case "EN", "英文", "英文输入法" -> Icon.ENGLISH;
             default -> throw new IllegalArgumentException("No shortcut icon for: " + label);
         };
     }
@@ -52,7 +55,8 @@ public final class KeyboardShortcutIconPolicy {
     public static boolean materialGlyph(Icon icon) {
         return switch (icon) {
             case EMOJI, PHRASE, CLIPBOARD, SKIN, SCHEME, FLOATING, TEXT_EDIT, DISMISS -> true;
-            case SETTINGS, REPLY, VOICE, GLOBE, BOOKMARK, UNDO, REDO, SYMBOL, RANDOM_DIGITS -> false;
+            case SETTINGS, REPLY, VOICE, GLOBE, BOOKMARK, UNDO, REDO, SYMBOL, RANDOM_DIGITS,
+                STROKE, PINYIN, ENGLISH -> false;
         };
     }
 }
