@@ -1,6 +1,6 @@
-//! 笔画输入：按笔顺键入横竖撇点折，读 `msime-stroke.db`（`language_dictionary`）给出单字候选。只读，不学习，不做繁简转换。
+//! 笔画输入：按笔顺键入横竖撇点折，读 `msime-stroke.db`（`language_dictionary`）给出单字和分段词组候选。只读，不学习，不做繁简转换。
 //!
-//! 键位：`h` 横、`s` 竖、`p` 撇、`n` 点（捺）、`z` 折，`x` 是匹配任意一笔的通配符。全部是小写字母，所以不占用任何标点键，也不需要宿主把它们当拼写符号转发。
+//! 键位：`h` 横、`s` 竖、`p` 撇、`n` 点（捺）、`z` 折，`x` 是匹配任意一笔的通配符，撇号分隔词组中的字。笔画键是小写字母，撇号由宿主作为组字分隔符转发。
 
 pub mod scheme;
 
@@ -63,7 +63,7 @@ pub(crate) mod fixture {
     };
 
     /// `土` 有两个笔画码，用来检查同一个字只列一次；`乚` 没有字频，用来检查它排在有字频的补全后面。
-    pub(crate) const ENTRIES: [(&str, &str, i64); 12] = [
+    pub(crate) const ENTRIES: [(&str, &str, i64); 13] = [
         ("h", "一", 9000),
         ("hh", "二", 5000),
         ("hhh", "三", 4000),
@@ -76,6 +76,7 @@ pub(crate) mod fixture {
         ("pn", "人", 6000),
         ("szh", "口", 3500),
         ("sz", "乚", 0),
+        ("phshzpn psnsz", "我们", 9999),
     ];
 
     pub(crate) fn build(path: &Path) {

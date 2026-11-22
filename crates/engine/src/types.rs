@@ -115,7 +115,7 @@ pub enum SchemeType {
     Vietnamese = 7,
     /// 藏文，在拉丁键盘上按 EWTS（扩展威利转写）拼写：威利原文在组字里组成一个音节串，显示为转换出的藏文；空格带音节点上屏，`/` 带垂符上屏，回车只上屏藏文；没有候选。
     Tibetan = 8,
-    /// Stroke (笔画) read against `msime-stroke.db`: the keys h s p n z type the five strokes 横竖撇点折 in writing order and x stands for any one stroke; the preedit draws the strokes, candidates are single characters whose stroke code starts with the typed strokes, and nothing is learned.
+    /// Stroke (笔画) read against `msime-stroke.db`: the keys h s p n z type the five strokes 横竖撇点折 in writing order and x stands for any one stroke; the preedit draws the strokes, an apostrophe (or the space command) separates phrase segments, candidates are characters or phrases whose stroke codes start with the typed segments, and nothing is learned.
     Stroke = 9,
 }
 

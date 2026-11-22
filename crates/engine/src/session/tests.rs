@@ -11717,6 +11717,25 @@ fn stroke_composes_glyphs_from_its_keys() {
 }
 
 #[test]
+fn stroke_phrase_input_uses_apostrophe_or_space_as_a_segment_separator() {
+    let fixture = Fixture::new(QUANPIN_FIXTURE);
+    let mut session = stroke_session(&fixture);
+    type_text(&mut session, "ph");
+    assert!(session.punctuation(b'\'').handled);
+    assert_eq!(session.snapshot().editing_text, "ph'");
+    assert_eq!(session.snapshot().preedit, "丿一'");
+    type_text(&mut session, "ps");
+    assert_eq!(words(&session), ["我们"]);
+    assert_eq!(session.select(0).commit.as_deref(), Some("我们"));
+
+    type_text(&mut session, "ph");
+    assert!(session.command(Command::CommitCandidate).handled);
+    assert_eq!(session.snapshot().editing_text, "ph'");
+    type_text(&mut session, "ps");
+    assert_eq!(words(&session), ["我们"]);
+}
+
+#[test]
 fn stroke_candidate_refresh_reuses_row_storage() {
     let fixture = Fixture::new(QUANPIN_FIXTURE);
     let mut session = stroke_session(&fixture);
@@ -11790,11 +11809,10 @@ fn stroke_rows_are_never_learned_or_edited() {
     assert!(session.snapshot().preedit.is_empty());
     type_text(&mut session, "h");
     assert_eq!(words(&session), order);
-    // Space 选高亮候选。
-    assert_eq!(
-        session.command(Command::CommitCandidate).commit.as_deref(),
-        Some("一")
-    );
+    // 笔画词组用空格插入分隔符；选词使用候选点击、数字键或回车。
+    assert!(session.command(Command::CommitCandidate).commit.is_none());
+    assert_eq!(session.snapshot().editing_text, "h'");
+    assert!(session.command(Command::Cancel).handled);
     // Enter 上屏键入的字母串，不是字形。
     type_text(&mut session, "hsx");
     assert_eq!(
@@ -11802,11 +11820,11 @@ fn stroke_rows_are_never_learned_or_edited() {
         Some("hsx")
     );
     assert!(session.snapshot().preedit.is_empty());
-    // 没有候选时 Space 也上屏字母串。
+    // 没有候选时 Enter 仍上屏字母串。
     type_text(&mut session, "zzzz");
     assert!(words(&session).is_empty());
     assert_eq!(
-        session.command(Command::CommitCandidate).commit.as_deref(),
+        session.command(Command::CommitRaw).commit.as_deref(),
         Some("zzzz")
     );
     // 标点先上屏首选再跟标点。

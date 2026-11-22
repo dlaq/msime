@@ -12,7 +12,7 @@ use crate::error::{EngineError, Result};
 /// The schema version the engine reads. A file with any other `format_version` is refused.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// The whole schema. `entries.key` is the syllables of an entry joined by a single space; in `msime-stroke.db` it is the character's stroke code (`hspnz` letters, no spaces).
+/// The whole schema. `entries.key` is the syllables of an entry joined by a single space; in `msime-stroke.db` it is either a character's stroke code (`hspnz` letters) or a space-separated sequence of per-character stroke codes for a phrase.
 pub const SCHEMA: &str = "\
 CREATE TABLE metadata(name TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE syllables(syllable TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -309,6 +309,55 @@ impl LanguageDictionary {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// 笔画词组查询：每个位置是一个字的笔画前缀，位置之间用空格连接。`wildcard` 只匹配一个笔画；每段末尾自动允许继续补笔画，但不会越过空格，所以词组的字数必须和输入分段数相同。
+    pub fn lookup_stroke_phrase_into(
+        &self,
+        segments: &[&str],
+        wildcard: char,
+        limit: usize,
+        result: &mut Vec<(String, LanguageEntry)>,
+    ) -> Result<()> {
+        result.clear();
+        if segments.len() < 2 || limit == 0 || segments.iter().any(|segment| segment.is_empty()) {
+            return Ok(());
+        }
+        let mut pattern = String::new();
+        for (position, segment) in segments.iter().enumerate() {
+            if position > 0 {
+                pattern.push(' ');
+            }
+            for character in segment.chars() {
+                if character == wildcard {
+                    pattern.push_str("[^ ]");
+                } else if matches!(character, 'h' | 's' | 'p' | 'n' | 'z') {
+                    pattern.push(character);
+                } else {
+                    // A malformed segment must never turn into a broad GLOB scan.
+                    result.clear();
+                    return Ok(());
+                }
+            }
+            // Keep the match inside this character's code. The final `*` is deliberately
+            // not used: SQLite GLOB's `*` would also consume the following spaces.
+            pattern.push_str("[^ ]*");
+        }
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self.connection.prepare_cached(
+            "SELECT key, text, weight FROM entries WHERE key GLOB ?1 ORDER BY weight DESC, text ASC LIMIT ?2",
+        )?;
+        let rows = statement.query_map((pattern.as_str(), limit), |row| {
+            Ok((
+                row.get(0)?,
+                LanguageEntry {
+                    text: row.get(1)?,
+                    weight: row.get(2)?,
+                },
+            ))
+        })?;
+        result.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
         Ok(())
     }
 
@@ -743,7 +792,7 @@ mod tests {
         assert_eq!(glob_pattern("a*?[", 'x', false), "a[*][?][[]");
     }
 
-    // 合成的笔画数据：键是笔顺字母串。通配符可以在中间、末尾或开头；补全只匹配前缀，精确只匹配同长度的键；带空格的键（将来的词组）不进单字结果。
+    // 合成的笔画数据：键是笔顺字母串。通配符可以在中间、末尾或开头；补全只匹配前缀，精确只匹配同长度的键；带空格的词组键不进单字结果。
     #[test]
     fn matches_wildcard_patterns_within_the_literal_prefix() {
         let dir = tempfile::tempdir().unwrap();

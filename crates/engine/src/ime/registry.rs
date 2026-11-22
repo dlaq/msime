@@ -538,7 +538,7 @@ impl ProviderRegistry {
         destination
     }
 
-    /// `msime-stroke.db` 对请求笔画的单字候选，顺序同 `StrokeScheme::candidates`。每行以键入的笔画为 `pinyin`、以该字的完整笔画码为 `canonical_pinyin`；笔画不学习，这两个键只用于显示，从不写回任何词典。读失败时不给候选，与粤拼一样。
+    /// `msime-stroke.db` 对请求笔画的字/词候选，顺序同 `StrokeScheme::candidates`。每行以键入的笔画为 `pinyin`、以该字或词的完整笔画码为 `canonical_pinyin`；笔画不学习，这两个键只用于显示，从不写回任何词典。读失败时不给候选，与粤拼一样。
     fn stroke_candidates(&mut self, request: &QueryRequest) -> Vec<WordItem> {
         let mut destination = Vec::new();
         self.query_stroke_into(request, &mut destination);

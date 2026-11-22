@@ -145,6 +145,20 @@ else
 fi
 # Optional Cantonese, Zhuyin and Stroke dictionaries fetched by scripts/fetch_language_dictionaries.py (or built by `msime-dict-build languages`), as on macOS, iOS and HarmonyOS. Bootstrap extracts them to language-dictionaries/ beside the resources, where host-api finds them and names them in the runtime options; the keyboard and the settings page leave a scheme whose dictionary is missing out. Each dictionary is packaged only with its licence text, which must travel with the data.
 languages_source=${MSIME_LANGUAGE_DICTIONARIES:-$repo_root/target/language-dictionaries}
+# MSIME_STROKE_PHRASES=1 replaces the local stroke database with the pinned
+# ximeiorg/rime-stroke table, which includes phrase rows. Release builds keep
+# the normal locked dictionary unless this explicit local-build switch is set.
+stroke_phrases=${MSIME_STROKE_PHRASES:-0}
+if [ "$stroke_phrases" = 1 ]; then
+  if grep -qxF "msime-stroke.db" <<< "$edition_languages"; then
+    python3 "$repo_root/scripts/build_stroke_dictionary.py" --out "$languages_source"
+  else
+    echo "MSIME_STROKE_PHRASES=1 ignored: edition $edition does not package the stroke dictionary"
+  fi
+elif [ "$stroke_phrases" != 0 ]; then
+  echo "MSIME_STROKE_PHRASES must be 0 or 1" >&2
+  exit 1
+fi
 # Each dictionary beside the licence file that must travel with it; the staging below and the APK check at the end read the same list.
 language_pairs="msime-cantonese.db:msime-rime_cantonese_LICENSE.txt msime-zhuyin.db:msime-libchewing_data_LICENSE.txt msime-stroke.db:msime-rime_stroke_LICENSE.txt"
 rm -rf "$assets/language-dictionaries"

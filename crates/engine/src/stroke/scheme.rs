@@ -1,4 +1,4 @@
-//! 笔画组合：键入的笔画与通配符，以及 `msime-stroke.db` 对它们给出的单字候选。选中任一候选都结束整个组合，没有分段，也不保留词组进度。
+//! 笔画组合：键入的笔画与通配符，以及 `msime-stroke.db` 对它们给出的单字或词组候选。每个字是一段笔画前缀，撇号把多个字的段分开。
 
 use super::{glyph, is_key, is_stroke, key_of_glyph, MAX_STROKES, WILDCARD};
 use crate::error::Result;
@@ -9,8 +9,10 @@ use crate::types::{QueryRequest, SchemeKey, SchemeType};
 pub const EXACT_LIMIT: usize = 200;
 /// 以键入笔画开头、笔画更多的字最多读这么多。
 pub const COMPLETION_LIMIT: usize = 100;
+/// 笔画词组候选最多读这么多。词组查询本身已经按词库权重排序。
+pub const PHRASE_LIMIT: usize = 200;
 
-/// 一个候选字和它在 `msime-stroke.db` 里的笔画码。
+/// 一个候选字或词和它在 `msime-stroke.db` 里的笔画码。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrokeCandidate {
     pub text: String,
@@ -21,7 +23,7 @@ pub struct StrokeCandidate {
 
 #[derive(Debug, Clone, Default)]
 pub struct StrokeScheme {
-    /// `hspnz` 与 `x`，至多 `MAX_STROKES` 个。键入时 `x` 不会出现在开头；宿主编辑可能把它留在开头。
+    /// `hspnz`、`x` 与词组分隔用的 `'`，至多 `MAX_STROKES` 个输入字节。键入时 `x` 不会出现在整个组合开头；宿主编辑可能把它留在开头。
     input: String,
 }
 
@@ -31,6 +33,7 @@ pub(crate) struct StrokeQueryBuffer {
     entries: Vec<LanguageEntry>,
     exact_pattern: Vec<(String, LanguageEntry)>,
     completions: Vec<(String, LanguageEntry)>,
+    phrases: Vec<(String, LanguageEntry)>,
 }
 
 impl StrokeQueryBuffer {
@@ -58,6 +61,15 @@ impl StrokeQueryBuffer {
         }
         Ok(has_wildcard)
     }
+
+    fn query_phrase(&mut self, dictionary: &LanguageDictionary, segments: &[&str]) -> Result<()> {
+        dictionary.lookup_stroke_phrase_into(
+            segments,
+            char::from(WILDCARD),
+            PHRASE_LIMIT,
+            &mut self.phrases,
+        )
+    }
 }
 
 impl StrokeScheme {
@@ -69,14 +81,14 @@ impl StrokeScheme {
         self.input.clear();
     }
 
-    /// 笔画键追加一笔；通配符只在已有笔画时追加；Backspace 删最后一笔。达到 `MAX_STROKES` 后不再追加。其他键（别的字母、大写、符号）都不改变组合，是否吞掉由会话决定。
+    /// 笔画键追加一笔；通配符只在已有组合时追加；撇号分隔词组中的字；Backspace 删最后一个笔画或分隔符。达到 `MAX_STROKES` 后不再追加。其他键（别的字母、大写、符号）都不改变组合，是否吞掉由会话决定。
     pub fn handle_key(&mut self, key: SchemeKey) -> bool {
         match key {
             SchemeKey::Letter(letter) if is_stroke(letter) => self.push(letter),
             SchemeKey::Letter(WILDCARD) if !self.input.is_empty() => self.push(WILDCARD),
+            SchemeKey::Apostrophe => self.push_delimiter(),
             SchemeKey::Backspace => self.input.pop().is_some(),
             SchemeKey::Letter(_)
-            | SchemeKey::Apostrophe
             | SchemeKey::Semicolon
             | SchemeKey::Minus
             | SchemeKey::Symbol(_)
@@ -93,11 +105,26 @@ impl StrokeScheme {
         }
     }
 
-    /// 用宿主编辑后的文本替换组合：笔画键和通配符原样保留，笔画字形换回对应的键，其他字符丢弃，超出 `MAX_STROKES` 的部分截掉。
+    fn push_delimiter(&mut self) -> bool {
+        if self.input.len() < MAX_STROKES
+            && self.input.as_bytes().last().is_some_and(|key| is_key(*key))
+        {
+            self.input.push('\'');
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 用宿主编辑后的文本替换组合：笔画键、通配符和合法的撇号分隔符原样保留，笔画字形换回对应的键，其他字符丢弃，超出 `MAX_STROKES` 的部分截掉。
     pub fn set_raw_input(&mut self, raw: &str) {
         self.input.clear();
         self.input.reserve(raw.len().min(MAX_STROKES));
         for character in raw.chars() {
+            if character == '\'' {
+                self.push_delimiter();
+                continue;
+            }
             let key = match u8::try_from(character) {
                 Ok(byte) if is_key(byte) => Some(byte),
                 _ => key_of_glyph(character),
@@ -108,7 +135,7 @@ impl StrokeScheme {
         }
     }
 
-    /// 键入的笔画字母（`hspnzx`），Enter 上屏的就是它。
+    /// 键入的笔画字母和词组分隔符（`hspnzx'`），Enter 上屏的就是它。
     pub fn input(&self) -> &str {
         &self.input
     }
@@ -117,7 +144,7 @@ impl StrokeScheme {
         self.input.is_empty()
     }
 
-    /// 组合显示的笔画字形，例如 `一丨＊`。
+    /// 组合显示的笔画字形，例如 `一丨＊`；词组分隔符保留为 `'`。
     pub fn glyphs(&self) -> String {
         let mut output = String::new();
         self.glyphs_into(&mut output);
@@ -126,7 +153,15 @@ impl StrokeScheme {
 
     pub fn glyphs_into(&self, output: &mut String) {
         output.clear();
-        output.extend(self.input.bytes().filter_map(glyph));
+        for character in self.input.chars() {
+            if character == '\'' {
+                output.push('\'');
+            } else if let Ok(key) = u8::try_from(character) {
+                if let Some(glyph) = glyph(key) {
+                    output.push(glyph);
+                }
+            }
+        }
     }
 
     /// 会话刷新用的请求。`raw_input` 是键入的字母，也是宿主编辑的文本；`normalized_segmentation` 是快照 `reading` 带给宿主绘制的笔画字形。
@@ -144,7 +179,7 @@ impl StrokeScheme {
         request.raw_segmentation.clone_from(&self.input);
         self.glyphs_into(&mut request.normalized_segmentation);
         request.segmentation.clone_from(&self.input);
-        request.valid = !self.input.is_empty();
+        request.valid = self.input.bytes().any(is_key);
     }
 
     /// 会话显示并据以判断是否在组合的文本：笔画字形，没有组合时为空。
@@ -152,16 +187,27 @@ impl StrokeScheme {
         self.glyphs()
     }
 
-    /// 组合的候选，每个字只列一次：
+    /// 组合的候选，每个字或词只列一次：
     /// 1. 有字频、笔画码与键入完全相同的字（通配符匹配任意一笔），重的在前；
     /// 2. 有字频、以键入笔画开头、笔画更多的字，重的在前；
     /// 3. 没有字频的字（权重为 0 的生僻字），同样精确匹配在前、补全在后。
     ///
     /// 笔数恰好打满时，生僻字的精确匹配不再挡在常用字的补全前面。
+    /// 有撇号时改查词组：撇号两边各是一字的笔画前缀，支持每个字使用不同长度的前缀。
     pub fn candidates(&self, dictionary: &LanguageDictionary) -> Result<Vec<StrokeCandidate>> {
         let input = self.input.as_str();
         if input.is_empty() {
             return Ok(Vec::new());
+        }
+        if input.contains('\'') {
+            let segments: Vec<&str> = input.split('\'').collect();
+            let mut buffer = StrokeQueryBuffer::default();
+            buffer.query_phrase(dictionary, &segments)?;
+            let mut candidates = Vec::with_capacity(buffer.phrases.len());
+            for (key, entry) in buffer.phrases {
+                push_owned_candidate(&mut candidates, key, entry);
+            }
+            return Ok(candidates);
         }
         let mut buffer = StrokeQueryBuffer::default();
         buffer.query(dictionary, input)?;
@@ -218,6 +264,24 @@ impl StrokeScheme {
         let input = self.input.as_str();
         if input.is_empty() {
             candidates.clear();
+            return Ok(());
+        }
+        if input.contains('\'') {
+            let segments: Vec<&str> = input.split('\'').collect();
+            if let Err(error) = buffer.query_phrase(dictionary, &segments) {
+                candidates.clear();
+                return Err(error);
+            }
+            let mut length = 0;
+            let mut seen: Vec<&str> = Vec::new();
+            for (key, entry) in &buffer.phrases {
+                if seen.iter().any(|text| *text == entry.text) {
+                    continue;
+                }
+                seen.push(&entry.text);
+                push_candidate(candidates, &mut length, key, entry);
+            }
+            candidates.truncate(length);
             return Ok(());
         }
         let has_wildcard = match buffer.query(dictionary, input) {
@@ -338,7 +402,11 @@ mod tests {
     fn typed(keys: &str) -> StrokeScheme {
         let mut scheme = StrokeScheme::new();
         for key in keys.bytes() {
-            scheme.handle_key(SchemeKey::Letter(key));
+            scheme.handle_key(if key == b'\'' {
+                SchemeKey::Apostrophe
+            } else {
+                SchemeKey::Letter(key)
+            });
         }
         scheme
     }
@@ -374,7 +442,6 @@ mod tests {
             SchemeKey::Letter(b'a'),
             SchemeKey::Letter(b'H'),
             SchemeKey::Letter(b'q'),
-            SchemeKey::Apostrophe,
             SchemeKey::Semicolon,
             SchemeKey::Minus,
             SchemeKey::Symbol(b'*'),
@@ -383,6 +450,9 @@ mod tests {
             scheme.handle_key(key);
         }
         assert_eq!(scheme.input(), "h");
+        assert!(scheme.handle_key(SchemeKey::Apostrophe));
+        assert_eq!(scheme.input(), "h'");
+        assert!(!scheme.handle_key(SchemeKey::Apostrophe));
     }
 
     #[test]
@@ -424,6 +494,9 @@ mod tests {
         scheme.set_raw_input("h丨a丿x1乛 ＊");
         assert_eq!(scheme.input(), "hspxzx");
         assert_eq!(scheme.preedit(), "一丨丿＊乛＊");
+        scheme.set_raw_input("h丨'丿");
+        assert_eq!(scheme.input(), "hs'p");
+        assert_eq!(scheme.preedit(), "一丨'丿");
         // 宿主编辑留下的开头通配符保留，查询照样能用。
         scheme.set_raw_input("xs");
         assert_eq!(scheme.input(), "xs");
@@ -453,6 +526,22 @@ mod tests {
         assert_eq!(candidates[1].key, "hsh");
         assert!(texts(&typed("zzzz"), dictionary).is_empty());
         assert!(texts(&StrokeScheme::new(), dictionary).is_empty());
+    }
+
+    #[test]
+    fn apostrophe_queries_phrase_prefixes_with_mixed_lengths() {
+        let fixture = fixture();
+        let dictionary = &fixture.dictionary;
+        let scheme = typed("ph'ps");
+        assert_eq!(scheme.preedit(), "丿一'丿丨");
+        assert_eq!(texts(&scheme, dictionary), ["我们"]);
+        let candidate = scheme.candidates(dictionary).unwrap().pop().unwrap();
+        assert_eq!(candidate.key, "phshzpn psnsz");
+        assert_eq!(
+            typed("px'px").candidates(dictionary).unwrap()[0].text,
+            "我们"
+        );
+        assert_eq!(scheme.build_request().normalized_segmentation, "丿一'丿丨");
     }
 
     #[test]

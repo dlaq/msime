@@ -740,7 +740,7 @@ impl InputSession {
         KeyResult::handled()
     }
 
-    /// 笔画键：`hspnz` 追加一笔，组合中 `x` 追加通配。空组合时其他键（含 `x`）交还宿主；组合中其他字母被吞掉，组合不变，非字母键（数字、空格、标点）照常不处理，由选词和标点路径接手。
+    /// 笔画键：`hspnz` 追加一笔，组合中 `x` 追加通配；组合中的撇号分隔词组段。空组合时其他键（含 `x`）交还宿主；组合中其他字母被吞掉，组合不变，非字母键（数字、空格、标点）照常不处理，由选词和标点路径接手。
     fn handle_stroke_character(&mut self, value: u8) -> KeyResult {
         if !self.has_composition() {
             if !stroke::is_stroke(value) {
@@ -752,14 +752,22 @@ impl InputSession {
             if self.chain.previous.is_some() && self.chain.paused(self.steady_now()) {
                 self.chain.reset();
             }
-        } else if !value.is_ascii_alphabetic() {
+        } else if value != b'\'' && !value.is_ascii_alphabetic() {
             return KeyResult::unhandled();
         }
         let previous = self.engine.request().raw_input.len();
-        self.engine.handle_key(SchemeKey::Letter(value));
+        let key = if value == b'\'' {
+            SchemeKey::Apostrophe
+        } else {
+            SchemeKey::Letter(value)
+        };
+        let changed = self.engine.handle_key(key);
         self.update_mixed_candidates();
         if self.engine.request().raw_input.len() != previous {
             self.invalidate_online_requests();
+        }
+        if value == b'\'' && !changed {
+            return KeyResult::unhandled();
         }
         KeyResult::handled()
     }
@@ -1094,6 +1102,15 @@ impl InputSession {
                 _ => {}
             }
         }
+        // 笔画词组沿用成熟 Rime 方案的习惯：空格不是立即选首候选，而是在已有一段笔画后插入词组分隔符。没有可插入的分隔符时再走普通的空格选词路径。
+        if command == Command::CommitCandidate
+            && self.stroke_rules_apply()
+            && self.engine.handle_key(SchemeKey::Apostrophe)
+        {
+            self.update_mixed_candidates();
+            self.invalidate_online_requests();
+            return KeyResult::handled();
+        }
         match command {
             Command::MoveLeft
             | Command::MoveRight
@@ -1233,6 +1250,10 @@ impl InputSession {
         }
         // A host that reports the apostrophe as punctuation still separates a unit from its target (`3jin'g`), or the words of `/fy`, instead of ending the mode.
         if value == b'\'' && self.takes_local_separator() {
+            return self.handle_character(value, false);
+        }
+        // 笔画词组也用撇号分隔每个字；部分宿主把撇号作为标点事件送进来，不能让它提前结束组字。
+        if value == b'\'' && self.stroke_rules_apply() {
             return self.handle_character(value, false);
         }
         // 拆字里微软双拼的韵母 `;` 同样是输入，宿主按组字原文数奇偶时会把它当标点送来。
