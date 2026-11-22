@@ -262,6 +262,12 @@ public final class SkinsPage extends ReloadingDetailPage {
                 ViewPolicy.bindClick(importButton, () -> openDocument.launch(
                     new String[] {"application/json", "text/plain", "application/octet-stream"}));
                 actions.addView(importButton, LayoutPolicy.wrapParams());
+                MaterialButton baiduButton = new MaterialButton(context, null,
+                    androidx.appcompat.R.attr.borderlessButtonStyle);
+                baiduButton.setText("应用百度经典皮肤");
+                baiduButton.setContentDescription("应用百度经典皮肤");
+                ViewPolicy.bindClick(baiduButton, this::installAndApplyBaiduSkins);
+                actions.addView(baiduButton, LayoutPolicy.wrapParams());
                 target.addView(actions, LayoutPolicy.matchWidthWrapParams());
                 grid(target, cards);
             }
@@ -386,6 +392,67 @@ public final class SkinsPage extends ReloadingDetailPage {
         } catch (java.io.IOException | RuntimeException error) {
             return null;
         }
+    }
+
+    private void installAndApplyBaiduSkins() {
+        HostTask.run(this, SkinsPage::writeBaiduSkins, ok -> {
+            if (!Boolean.TRUE.equals(ok)) {
+                MsToast.show(requireContext(), "应用百度经典皮肤失败，请稍后重试");
+                return;
+            }
+            MsToast.show(requireContext(), "已添加并启用百度经典浅色/深色皮肤");
+            reload();
+        });
+    }
+
+    private static boolean writeBaiduSkins(Context context) {
+        String directory = HostStore.directory(context);
+        if (directory.isEmpty()) return false;
+        try {
+            long now = System.currentTimeMillis();
+            JSONObject light = baiduDesign(0xECEFF4, 0xFFFFFF, 0x1F2329, 0x3388FF, 0xD8DDE6, 0.18);
+            JSONObject dark = baiduDesign(0x1C1E24, 0x323640, 0xF2F4F8, 0x3388FF, 0x262932, 0.22);
+            CustomSkinLibrary.add(Paths.get(directory), "baidu-classic-light", "百度经典浅色", light, now);
+            CustomSkinLibrary.add(Paths.get(directory), "baidu-classic-dark", "百度经典深色", dark, now);
+            JSONObject saved = KeyboardSheets.write(context, preferences -> {
+                preferences.put(KeyboardSkinModeChoice.key(false),
+                    KeyboardSkinModeChoice.design("baidu-classic-light"));
+                preferences.put(KeyboardSkinModeChoice.key(true),
+                    KeyboardSkinModeChoice.design("baidu-classic-dark"));
+                KeyboardSheets.applyDesignFeedback(preferences, light);
+            });
+            if (saved == null) return false;
+            KeyboardSheets.applyLocalFeedback(context, light);
+            KeyboardSheets.recordSkin(context, "baidu-classic-light");
+            SyncSignals.markDirty(context, SyncSwitch.SKINS);
+            return true;
+        } catch (java.io.IOException | JSONException | RuntimeException error) {
+            return false;
+        }
+    }
+
+    private static JSONObject baiduDesign(int background, int keyBackground, int keyForeground,
+            int accent, int actionBackground, double shadow) throws JSONException {
+        return new JSONObject()
+            .put("background", background)
+            .put("keyBackground", keyBackground)
+            .put("keyForeground", keyForeground)
+            .put("accent", accent)
+            .put("actionBackground", actionBackground)
+            .put("cornerRadius", 6.0)
+            .put("borderWidth", 0.0)
+            .put("shadow", shadow)
+            .put("pattern", 0)
+            .put("monospaced", false)
+            .put("keyShape", "rounded")
+            .put("keyMaterial", "raised")
+            .put("keyOpacity", 1.0)
+            .put("gradientHorizontal", false)
+            .put("patternOpacity", 0.15)
+            .put("photoShade", 0.25)
+            .put("photoPosition", 0.5)
+            .put("soundPack", "default")
+            .put("pressAnimation", "bounce");
     }
 
     /** AI 入口与皮肤卡同尺寸，尚未生成设计时用说明替代键盘预览。 */
