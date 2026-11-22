@@ -13,6 +13,8 @@ public final class StrokeKeyboardLayout {
 
     /** The wildcard letter: with nothing composing the Engine does not start a composition from it, so the keypad does not send it then. */
     public static final char WILDCARD = 'x';
+    /** Phrase segment separator sent by the dedicated 分词 key while composing. */
+    public static final char SEPARATOR = '\'';
 
     private static final List<List<Key>> ROWS = List.of(
         List.of(new Key("一", "横", 'h'), new Key("丨", "竖", 's'), new Key("丿", "撇", 'p')),
@@ -48,5 +50,23 @@ public final class StrokeKeyboardLayout {
     /** Whether the keypad sends `input` now: the wildcard only extends a composition, and with nothing composing the Engine leaves it to the host, which would type a stray x. */
     public static boolean sends(char input, boolean composing) {
         return input != WILDCARD || composing;
+    }
+
+    /** Whether a phrase segment separator can follow {@code editingText}: requires a trailing stroke or wildcard key. */
+    public static boolean canSeparate(String editingText) {
+        if (editingText == null || editingText.isEmpty()) return false;
+        char last = editingText.charAt(editingText.length() - 1);
+        return last == 'h' || last == 's' || last == 'p' || last == 'n' || last == 'z'
+            || last == WILDCARD;
+    }
+
+    /** Face of the bottom-left grid key: {@code 分词} while composing strokes, {@code @#} when idle. */
+    public static String symbolOrSeparatorFace(boolean composing) {
+        return composing ? "分词" : "@#";
+    }
+
+    /** Spoken description matching {@link #symbolOrSeparatorFace(boolean)}. */
+    public static String symbolOrSeparatorDescription(boolean composing) {
+        return composing ? "分词，输入笔画词组时分隔单字" : "符号";
     }
 }

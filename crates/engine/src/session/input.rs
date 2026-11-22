@@ -740,7 +740,7 @@ impl InputSession {
         KeyResult::handled()
     }
 
-    /// 笔画键：`hspnz` 追加一笔，组合中 `x` 追加通配；组合中的撇号分隔词组段。空组合时其他键（含 `x`）交还宿主；组合中其他字母被吞掉，组合不变，非字母键（数字、空格、标点）照常不处理，由选词和标点路径接手。
+    /// 笔画键：`hspnz` 追加一笔，组合中 `x` 追加通配；组合中的撇号或空格分隔词组段。空组合时其他键（含 `x`）交还宿主；组合中其他字母被吞掉，组合不变，非字母键（数字、标点）照常不处理，由选词和标点路径接手。
     fn handle_stroke_character(&mut self, value: u8) -> KeyResult {
         if !self.has_composition() {
             if !stroke::is_stroke(value) {
@@ -752,11 +752,11 @@ impl InputSession {
             if self.chain.previous.is_some() && self.chain.paused(self.steady_now()) {
                 self.chain.reset();
             }
-        } else if value != b'\'' && !value.is_ascii_alphabetic() {
+        } else if value != b'\'' && value != b' ' && !value.is_ascii_alphabetic() {
             return KeyResult::unhandled();
         }
         let previous = self.engine.request().raw_input.len();
-        let key = if value == b'\'' {
+        let key = if value == b'\'' || value == b' ' {
             SchemeKey::Apostrophe
         } else {
             SchemeKey::Letter(value)
@@ -766,7 +766,7 @@ impl InputSession {
         if self.engine.request().raw_input.len() != previous {
             self.invalidate_online_requests();
         }
-        if value == b'\'' && !changed {
+        if (value == b'\'' || value == b' ') && !changed {
             return KeyResult::unhandled();
         }
         KeyResult::handled()
@@ -1102,9 +1102,10 @@ impl InputSession {
                 _ => {}
             }
         }
-        // 笔画词组沿用成熟 Rime 方案的习惯：空格不是立即选首候选，而是在已有一段笔画后插入词组分隔符。没有可插入的分隔符时再走普通的空格选词路径。
+        // 笔画词组沿用成熟 Rime 方案的习惯：空格在有候选且已有一段笔画时插入词组分隔符；无候选或刚分隔完时再走普通的空格选词/提交原文路径。
         if command == Command::CommitCandidate
             && self.stroke_rules_apply()
+            && !self.candidates().is_empty()
             && self.engine.handle_key(SchemeKey::Apostrophe)
         {
             self.update_mixed_candidates();
@@ -1518,6 +1519,13 @@ impl InputSession {
                 }
             } else {
                 String::new()
+            };
+        }
+        if self.stroke_rules_apply() && self.engine.stroke_accepts_delimiter() {
+            return if self.candidates().is_empty() {
+                "'".to_owned()
+            } else {
+                "' ".to_owned()
             };
         }
         // 组字原文是网址触发词时发布触发键，原文能做邮箱的本地部分时发布 `@`，runtime 才会把它当作字符送进来，而不是先结束组字。发布的键必须正是 `url_entry` 接受的键。

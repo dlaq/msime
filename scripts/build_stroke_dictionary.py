@@ -47,6 +47,7 @@ CREATE TABLE metadata(name TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE syllables(syllable TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE entries(key TEXT NOT NULL, text TEXT NOT NULL, weight INTEGER NOT NULL, PRIMARY KEY(key, text)) WITHOUT ROWID;
 CREATE INDEX entries_by_key_weight ON entries(key, weight DESC);
+CREATE INDEX entries_by_text_weight ON entries(text, weight DESC);
 """
 
 

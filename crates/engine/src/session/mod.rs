@@ -512,6 +512,11 @@ impl Session {
             let Some((row, word, pinyin)) = self.prediction.selected(index) else {
                 return KeyResult::unhandled();
             };
+            if self.input.scheme() == SchemeType::Stroke {
+                let rows = self.input.engine.stroke_next_words(&word, 16);
+                self.prediction.show_static(&word, rows);
+                return KeyResult::committed(row.word.to_string());
+            }
             let diagnostic = self.input.record_personal_context(Some(&row), false, false);
             self.show_prediction(&word, &pinyin, &row.word, &row.word);
             return KeyResult::committed(row.word.to_string()).with_diagnostic(diagnostic);
@@ -1196,13 +1201,18 @@ impl Session {
             || self.input.local_mode != LocalInputMode::None
             || !matches!(
                 self.input.scheme(),
-                SchemeType::Quanpin | SchemeType::Shuangpin
+                SchemeType::Quanpin | SchemeType::Shuangpin | SchemeType::Stroke
             )
         {
             return;
         }
         let Some(selected) = selected else { return };
         if result.commit.as_deref() != Some(selected.word.as_str()) {
+            return;
+        }
+        if self.input.scheme() == SchemeType::Stroke {
+            let rows = self.input.engine.stroke_next_words(&selected.word, 16);
+            self.prediction.show_static(&selected.word, rows);
             return;
         }
         let previous = selected

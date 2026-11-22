@@ -80,6 +80,15 @@ impl Prediction {
         Some((row, word, pinyin))
     }
 
+    fn ensure_database_opened(&mut self) {
+        // 词库在第一次联想时才打开，个人习惯行也要按词库的粗俗词表过滤，所以先打开它。
+        if self.database.is_none() {
+            let database = PinyinDatabase::open(&self.path);
+            self.offensive = database.offensive_words();
+            self.database = Some(database);
+        }
+    }
+
     /// `word` 与 `pinyin` 是查词库续写用的种子（连续选联想时是上一次的种子接上选中的行），`committed` 是这一次真正上屏的文字，打分时接在上文后面。
     pub fn show(
         &mut self,
@@ -93,12 +102,7 @@ impl Prediction {
         if !self.enabled || !self.allowed || !is_all_han(word) {
             return;
         }
-        // 词库在第一次联想时才打开，个人习惯行也要按词库的粗俗词表过滤，所以先打开它。
-        if self.database.is_none() {
-            let database = PinyinDatabase::open(&self.path);
-            self.offensive = database.offensive_words();
-            self.database = Some(database);
-        }
+        self.ensure_database_opened();
         if let Some(personal) = personal {
             for (next, count) in personal.next_words(previous, LIMIT) {
                 if !is_all_han(&next) {
@@ -132,6 +136,23 @@ impl Prediction {
             && self.rows.len() - self.personal + self.spare.len() >= 2
         {
             self.pending = Some(committed.to_owned());
+        }
+    }
+
+    /// 静态语言词库（如笔画）的上屏后联想：按词频显示续写词条，不写入个人习惯。
+    pub fn show_static(
+        &mut self,
+        prefix: &str,
+        continuations: Vec<crate::language_dictionary::LanguageEntry>,
+    ) {
+        self.clear();
+        if !self.enabled || !self.allowed || !is_all_han(prefix) || continuations.is_empty() {
+            return;
+        }
+        self.ensure_database_opened();
+        for entry in continuations {
+            let seed_word = format!("{prefix}{}", entry.text);
+            self.push(&entry.text, "", entry.weight, seed_word, String::new());
         }
     }
 

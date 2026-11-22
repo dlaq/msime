@@ -43,6 +43,18 @@ public final class StrokeKeyboardLayoutSmoke {
             check(StrokeKeyboardLayout.sends(stroke, false) && StrokeKeyboardLayout.sends(stroke, true),
                 "a stroke key always sends: " + stroke);
         }
+        check(StrokeKeyboardLayout.SEPARATOR == '\'', "the separator key sends apostrophe");
+        check(!StrokeKeyboardLayout.canSeparate(null)
+            && !StrokeKeyboardLayout.canSeparate("")
+            && !StrokeKeyboardLayout.canSeparate("ph'")
+            && StrokeKeyboardLayout.canSeparate("ph")
+            && StrokeKeyboardLayout.canSeparate("hx"),
+            "canSeparate requires a trailing stroke or wildcard");
+        check("@#".equals(StrokeKeyboardLayout.symbolOrSeparatorFace(false))
+            && "分词".equals(StrokeKeyboardLayout.symbolOrSeparatorFace(true))
+            && "符号".equals(StrokeKeyboardLayout.symbolOrSeparatorDescription(false))
+            && StrokeKeyboardLayout.symbolOrSeparatorDescription(true).contains("分词"),
+            "symbol/separator key updates face and accessibility description with composition");
         boolean rejected = false;
         try { StrokeKeyboardLayout.face(null); } catch (IllegalArgumentException expected) { rejected = true; }
         check(rejected, "a missing key is a programming error");

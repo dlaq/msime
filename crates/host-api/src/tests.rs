@@ -5029,6 +5029,102 @@ fn zhuyin_with_the_nine_key_layout_starts_in_nine_key_mode() {
     read(msime_client_destroy(handle));
 }
 
+#[test]
+fn stroke_phrase_separators_work_via_command_space_and_apostrophe_over_ffi() {
+    use msime_engine::language_dictionary::{FORMAT_VERSION, METADATA_FORMAT_VERSION, SCHEMA};
+    let dir = tempfile::tempdir().unwrap();
+    let path = |name| {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    };
+    let language_dictionaries = path("language-dictionaries");
+    let connection =
+        rusqlite::Connection::open(language_dictionaries.join("msime-stroke.db")).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS entries_by_text_weight ON entries(text, weight DESC);",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO metadata VALUES (?1, ?2)",
+            (METADATA_FORMAT_VERSION, FORMAT_VERSION.to_string()),
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO syllables VALUES ('h'),('s'),('p'),('n'),('z');\
+             INSERT INTO entries VALUES\
+             ('phshzpn', '我', 9500),\
+             ('phshzpn psnsz', '我们', 9999),\
+             ('pn', '人', 6000),\
+             ('pn pn', '人人', 8000),\
+             ('hs', '十', 4500);",
+        )
+        .unwrap();
+    drop(connection);
+
+    let preferences = Preferences {
+        scheme: InputScheme::Stroke,
+        ..chinese_preferences()
+    };
+    let options = json!({
+        "api_version": 1,
+        "resources": path("resources"),
+        "user_data": path("user"),
+        "cache": path("cache"),
+        "dictionaries": path("dictionaries"),
+        "preferences": preferences,
+        "language_dictionaries": language_dictionaries
+    })
+    .to_string();
+    let created = read(unsafe { msime_client_create(options.as_ptr(), options.len()) });
+    assert_eq!(created["ok"], true, "{created}");
+    let handle = created["value"]["session"].as_u64().unwrap();
+    read(msime_client_focus(handle, true));
+
+    // Space (command 1) separates segments and double-Space commits when at trailing delimiter.
+    for key in *b"ph" {
+        assert_eq!(
+            read(msime_client_character(handle, key, false))["value"]["handled"],
+            true
+        );
+    }
+    let sep = read(msime_client_command(handle, 1));
+    assert_eq!(sep["value"]["handled"], true);
+    assert!(sep["value"]["commit"].is_null());
+    assert_eq!(sep["value"]["view"]["editing_text"], "ph'");
+    for key in *b"ps" {
+        assert_eq!(
+            read(msime_client_character(handle, key, false))["value"]["handled"],
+            true
+        );
+    }
+    let view = read(msime_client_view(handle));
+    assert_eq!(view["value"]["candidates"][0]["text"], "我们");
+    let trailing = read(msime_client_command(handle, 1));
+    assert_eq!(trailing["value"]["view"]["editing_text"], "ph'ps'");
+    let commit = read(msime_client_command(handle, 1));
+    assert_eq!(commit["value"]["commit"], "我们");
+
+    // Apostrophe via punctuation_with_context separates segments as well.
+    for key in *b"pn" {
+        read(msime_client_character(handle, key, false));
+    }
+    let punct_sep = read(msime_client_punctuation_with_context(handle, b'\'', 0));
+    assert_eq!(punct_sep["value"]["handled"], true);
+    assert!(punct_sep["value"]["commit"].is_null());
+    assert_eq!(punct_sep["value"]["view"]["editing_text"], "pn'");
+    for key in *b"pn" {
+        read(msime_client_character(handle, key, false));
+    }
+    let renren = read(msime_client_view(handle));
+    assert_eq!(renren["value"]["candidates"][0]["text"], "人人");
+    read(msime_client_destroy(handle));
+}
+
 // 宿主为全拼九键打开的覆盖不能带进注音：从全拼切到注音时按注音自己的布局判断，没选「注音 9 键」就是大千键位。
 #[test]
 fn a_quanpin_nine_key_override_does_not_carry_into_zhuyin() {

@@ -139,9 +139,20 @@ impl InputSession {
                         || (value == b'+' && caret == 1 && !text.contains('+'));
                 }
                 LocalInputMode::QuickPhrase | LocalInputMode::DateTime => accepted = lower,
-                // 笔画只接受笔画键；通配符不能插在最前面；已满 `MAX_STROKES` 笔时不再插入（否则截断会丢掉末尾那一笔）。组合中的其他字母被吞掉，与在末尾键入时一样。
+                // 笔画接受笔画键及合法位置的分词撇号；通配符不能插在最前面；已满 `MAX_STROKES` 笔时不再插入（否则截断会丢掉末尾那一笔）。组合中的其他字母被吞掉，与在末尾键入时一样。
                 LocalInputMode::None if self.stroke_rules_apply() => {
-                    if !stroke::is_key(value)
+                    if value == b'\''
+                        && caret > 0
+                        && text.len() < stroke::MAX_STROKES
+                        && text
+                            .as_bytes()
+                            .get(caret - 1)
+                            .copied()
+                            .is_some_and(stroke::is_key)
+                        && text.as_bytes().get(caret).copied() != Some(b'\'')
+                    {
+                        accepted = true;
+                    } else if !stroke::is_key(value)
                         || (value == stroke::WILDCARD && caret == 0)
                         || text.len() >= stroke::MAX_STROKES
                     {
@@ -150,8 +161,9 @@ impl InputSession {
                         } else {
                             KeyResult::unhandled()
                         };
+                    } else {
+                        accepted = true;
                     }
-                    accepted = true;
                 }
                 LocalInputMode::None => {
                     let scheme = self.scheme();

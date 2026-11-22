@@ -202,6 +202,13 @@ impl Scheme {
         }
     }
 
+    pub fn as_stroke(&self) -> Option<&StrokeScheme> {
+        match self {
+            Self::Stroke(scheme) => Some(scheme),
+            _ => None,
+        }
+    }
+
     pub fn as_zhuyin_mut(&mut self) -> Option<&mut ZhuyinScheme> {
         match self {
             Self::Zhuyin(scheme) => Some(scheme.as_mut()),

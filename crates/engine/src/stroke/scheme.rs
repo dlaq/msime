@@ -105,10 +105,13 @@ impl StrokeScheme {
         }
     }
 
-    fn push_delimiter(&mut self) -> bool {
-        if self.input.len() < MAX_STROKES
+    pub fn can_push_delimiter(&self) -> bool {
+        self.input.len() < MAX_STROKES
             && self.input.as_bytes().last().is_some_and(|key| is_key(*key))
-        {
+    }
+
+    fn push_delimiter(&mut self) -> bool {
+        if self.can_push_delimiter() {
             self.input.push('\'');
             true
         } else {
@@ -200,13 +203,9 @@ impl StrokeScheme {
             return Ok(Vec::new());
         }
         if input.contains('\'') {
-            let segments: Vec<&str> = input.split('\'').collect();
             let mut buffer = StrokeQueryBuffer::default();
-            buffer.query_phrase(dictionary, &segments)?;
-            let mut candidates = Vec::with_capacity(buffer.phrases.len());
-            for (key, entry) in buffer.phrases {
-                push_owned_candidate(&mut candidates, key, entry);
-            }
+            let mut candidates = Vec::new();
+            self.phrase_candidates_into(dictionary, &mut buffer, &mut candidates)?;
             return Ok(candidates);
         }
         let mut buffer = StrokeQueryBuffer::default();
@@ -267,22 +266,7 @@ impl StrokeScheme {
             return Ok(());
         }
         if input.contains('\'') {
-            let segments: Vec<&str> = input.split('\'').collect();
-            if let Err(error) = buffer.query_phrase(dictionary, &segments) {
-                candidates.clear();
-                return Err(error);
-            }
-            let mut length = 0;
-            let mut seen: Vec<&str> = Vec::new();
-            for (key, entry) in &buffer.phrases {
-                if seen.iter().any(|text| *text == entry.text) {
-                    continue;
-                }
-                seen.push(&entry.text);
-                push_candidate(candidates, &mut length, key, entry);
-            }
-            candidates.truncate(length);
-            return Ok(());
+            return self.phrase_candidates_into(dictionary, buffer, candidates);
         }
         let has_wildcard = match buffer.query(dictionary, input) {
             Ok(has_wildcard) => has_wildcard,
@@ -335,6 +319,248 @@ impl StrokeScheme {
         candidates.truncate(length);
         Ok(())
     }
+
+    fn phrase_candidates_into(
+        &self,
+        dictionary: &LanguageDictionary,
+        buffer: &mut StrokeQueryBuffer,
+        candidates: &mut Vec<StrokeCandidate>,
+    ) -> Result<()> {
+        candidates.clear();
+        let input = self.input.as_str();
+        let trailing = input.ends_with('\'');
+        let segments: Vec<&str> = input
+            .split('\'')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return Ok(());
+        }
+        if trailing {
+            let mut base = Vec::new();
+            if segments.len() == 1 {
+                StrokeScheme {
+                    input: segments[0].to_owned(),
+                }
+                .candidates_into(dictionary, buffer, &mut base)?;
+            } else {
+                non_trailing_phrase_candidates_into(&segments, dictionary, buffer, &mut base)?;
+            }
+            let mut base_iter = base.into_iter();
+            if let Some(first) = base_iter.next() {
+                candidates.push(first);
+            }
+            if let Err(error) = dictionary.lookup_stroke_phrase_continuations_into(
+                &segments,
+                char::from(WILDCARD),
+                20,
+                &mut buffer.phrases,
+            ) {
+                candidates.clear();
+                return Err(error);
+            }
+            for (key, entry) in buffer.phrases.drain(..) {
+                push_owned_candidate(candidates, key, entry);
+            }
+            for candidate in base_iter {
+                if !contains_text(candidates, &candidate.text) {
+                    candidates.push(candidate);
+                }
+            }
+            return Ok(());
+        }
+        non_trailing_phrase_candidates_into(&segments, dictionary, buffer, candidates)
+    }
+}
+
+fn non_trailing_phrase_candidates_into(
+    segments: &[&str],
+    dictionary: &LanguageDictionary,
+    buffer: &mut StrokeQueryBuffer,
+    candidates: &mut Vec<StrokeCandidate>,
+) -> Result<()> {
+    candidates.clear();
+    if let Err(error) = buffer.query_phrase(dictionary, segments) {
+        candidates.clear();
+        return Err(error);
+    }
+    for (key, entry) in buffer.phrases.drain(..) {
+        push_owned_candidate(candidates, key, entry);
+    }
+    if segments.len() <= 16 && candidates.len() < 3 {
+        let tier1_empty = candidates.is_empty();
+        assemble_stroke_sentence(dictionary, segments, tier1_empty, candidates)?;
+    }
+    Ok(())
+}
+
+/// 词组表未命中或候选不足时，用动态规划把多段笔画拼成整句（先长词再高频单字），并在无整词命中时展开末段备选。
+fn assemble_stroke_sentence(
+    dictionary: &LanguageDictionary,
+    segments: &[&str],
+    emit_tail_variants: bool,
+    candidates: &mut Vec<StrokeCandidate>,
+) -> Result<()> {
+    const PHRASE_COHESION_BONUS: i128 = 200_000;
+
+    #[derive(Clone)]
+    struct DpNode {
+        score: i128,
+        text: String,
+        key: String,
+        last_start: usize,
+        last_weight: i64,
+    }
+
+    let n = segments.len();
+    if n < 2 {
+        return Ok(());
+    }
+    let mut dp: Vec<Option<DpNode>> = vec![None; n + 1];
+    dp[0] = Some(DpNode {
+        score: 0,
+        text: String::new(),
+        key: String::new(),
+        last_start: 0,
+        last_weight: 0,
+    });
+    let mut scratch_buffer = StrokeQueryBuffer::default();
+    let mut single_buf = Vec::new();
+    let wildcard = char::from(WILDCARD);
+
+    for i in 0..n {
+        if dp[i].is_none() {
+            continue;
+        }
+        for span_len in 1..=4.min(n - i) {
+            if span_len == n {
+                continue;
+            }
+            let j = i + span_len;
+            let (span_key, span_text, span_weight) = if span_len == 1 {
+                StrokeScheme {
+                    input: segments[i].to_owned(),
+                }
+                .candidates_into(
+                    dictionary,
+                    &mut scratch_buffer,
+                    &mut single_buf,
+                )?;
+                let Some(best_char) = single_buf.first() else {
+                    continue;
+                };
+                (
+                    best_char.key.clone(),
+                    best_char.text.clone(),
+                    best_char.weight,
+                )
+            } else {
+                dictionary.lookup_stroke_phrase_into(
+                    &segments[i..j],
+                    wildcard,
+                    1,
+                    &mut scratch_buffer.phrases,
+                )?;
+                let Some((key, entry)) = scratch_buffer.phrases.first() else {
+                    continue;
+                };
+                (key.clone(), entry.text.clone(), entry.weight)
+            };
+            let span_score = i128::try_from(span_len - 1).unwrap_or(0) * PHRASE_COHESION_BONUS
+                + i128::from(span_weight.max(1));
+            let prev = dp[i].as_ref().expect("checked non-none above");
+            let total_score = prev.score + span_score;
+            if dp[j]
+                .as_ref()
+                .is_none_or(|existing| total_score > existing.score)
+            {
+                let mut next_text = String::with_capacity(prev.text.len() + span_text.len());
+                next_text.push_str(&prev.text);
+                next_text.push_str(&span_text);
+                let mut next_key = String::with_capacity(prev.key.len() + 1 + span_key.len());
+                if !prev.key.is_empty() {
+                    next_key.push_str(&prev.key);
+                    next_key.push(' ');
+                }
+                next_key.push_str(&span_key);
+                dp[j] = Some(DpNode {
+                    score: total_score,
+                    text: next_text,
+                    key: next_key,
+                    last_start: i,
+                    last_weight: span_weight,
+                });
+            }
+        }
+    }
+
+    let Some(best) = dp[n].as_ref() else {
+        return Ok(());
+    };
+    if !contains_text(candidates, &best.text) {
+        candidates.push(StrokeCandidate {
+            text: best.text.clone(),
+            weight: best.last_weight.max(1),
+            key: best.key.clone(),
+        });
+    }
+    if !emit_tail_variants || best.last_start >= n {
+        return Ok(());
+    }
+    let prefix = dp[best.last_start].as_ref();
+    let prefix_text = prefix.map_or("", |node| node.text.as_str());
+    let prefix_key = prefix.map_or("", |node| node.key.as_str());
+    let tail = &segments[best.last_start..n];
+    let mut added = 0usize;
+    if tail.len() == 1 {
+        StrokeScheme {
+            input: tail[0].to_owned(),
+        }
+        .candidates_into(dictionary, &mut scratch_buffer, &mut single_buf)?;
+        for cand in single_buf.drain(..) {
+            let full_text = format!("{prefix_text}{}", cand.text);
+            if contains_text(candidates, &full_text) {
+                continue;
+            }
+            let full_key = if prefix_key.is_empty() {
+                cand.key
+            } else {
+                format!("{prefix_key} {}", cand.key)
+            };
+            candidates.push(StrokeCandidate {
+                text: full_text,
+                weight: cand.weight.max(1),
+                key: full_key,
+            });
+            added += 1;
+            if added >= 7 {
+                break;
+            }
+        }
+    } else {
+        dictionary.lookup_stroke_phrase_into(tail, wildcard, 8, &mut scratch_buffer.phrases)?;
+        for (key, entry) in scratch_buffer.phrases.drain(..) {
+            let full_text = format!("{prefix_text}{}", entry.text);
+            if contains_text(candidates, &full_text) {
+                continue;
+            }
+            let full_key = if prefix_key.is_empty() {
+                key
+            } else {
+                format!("{prefix_key} {key}")
+            };
+            candidates.push(StrokeCandidate {
+                text: full_text,
+                weight: entry.weight.max(1),
+                key: full_key,
+            });
+            added += 1;
+            if added >= 7 {
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn contains_text(candidates: &[StrokeCandidate], text: &str) -> bool {
@@ -658,5 +884,33 @@ mod tests {
         let mut scheme = StrokeScheme::new();
         scheme.set_raw_input("xn");
         assert_eq!(texts(&scheme, dictionary), ["人"]);
+    }
+
+    #[test]
+    fn trailing_delimiter_and_dynamic_sentence_assembly_work_with_phrases() {
+        let fixture = fixture();
+        let dictionary = &fixture.dictionary;
+        let connection =
+            rusqlite::Connection::open(fixture._dir.path().join("msime-stroke.db")).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO entries VALUES\
+                 ('pn pn', '人人', 7500),\
+                 ('pnhhzn hpsn pnhhzn', '会不会', 9900),\
+                 ('phshzpn', '我', 9500);",
+            )
+            .unwrap();
+        drop(connection);
+
+        // 末尾刚输入分隔符 `ph'`：首位保留当前字 `我`，紧接着词组续写 `我们`。
+        let trailing_single = typed("ph'");
+        assert_eq!(texts(&trailing_single, dictionary), ["我", "我们"]);
+
+        // 精确两字词组 `pn'pn` 只返回 `人人`，不能被三字词 `会不会` 污染。
+        assert_eq!(texts(&typed("pn'pn"), dictionary), ["人人"]);
+
+        // 词库没有的组合也能按整句动态拼接，并展开末段备选。
+        assert_eq!(texts(&typed("pn'hs"), dictionary), ["人十", "人土"]);
+        assert_eq!(texts(&typed("ph'ps'pn"), dictionary), ["我们人"]);
     }
 }

@@ -623,6 +623,8 @@ public final class MSIMEInputService extends InputMethodService {
     Button nineKeySymbolKey;
     /** 笔画网格的通配键：只在组字中可用，render 时按组字状态更新。 */
     Button strokeWildcardKey;
+    /** 笔画网格的分词键：组字中显示「分词」并发送 '，空闲时显示「@#」打开符号面板。 */
+    Button strokeSeparatorKey;
     String actionRowSignature = "";
     boolean brandPillVisible;
     JapaneseFlickPreview japaneseFlickPreview;
@@ -5540,7 +5542,10 @@ public final class MSIMEInputService extends InputMethodService {
         boolean microsoftFinal = MicrosoftShuangpinKeyPolicy.routesAsFinal(output, hasEngineComposition(),
             dedicatedEnglish, selectedScheme,
             view == null ? "none" : InputViewValuePolicy.textOr(view, "local_mode", "none"), customShuangpinSemicolon());
-        boolean punctuationKey = SmartPunctuationContext.isAsciiPunctuation(output) && !microsoftFinal;
+        boolean strokeEngineKey = view != null && StrokeInputPolicy.isEngineKey(strokeSchemeActive(), output,
+            InputViewValuePolicy.textOr(view, "spelling_symbols", ""));
+        boolean punctuationKey = SmartPunctuationContext.isAsciiPunctuation(output)
+            && !microsoftFinal && !strokeEngineKey;
         int geometryId = touched && !punctuationKey
             ? imeTouchPoints.geometryFor(output, letterCase.usesUppercase()) : 0;
         boolean handled = punctuationKey ? punctuation(output)
@@ -5577,6 +5582,11 @@ public final class MSIMEInputService extends InputMethodService {
             if (zhuyinSchemeActive()) {
                 clearSmartPunctuationSnapshots();
                 return apply(timedEngineCall(() -> NativeClient.punctuationWithContext(session, ascii, preceding)));
+            }
+            if (view != null && StrokeInputPolicy.isEngineKey(strokeSchemeActive(), ascii,
+                    InputViewValuePolicy.textOr(view, "spelling_symbols", ""))) {
+                clearSmartPunctuationSnapshots();
+                return character(ascii, false);
             }
             JSONObject decision = smartPunctuationDecision((char) ascii, before);
             // `isNull` first: org.json's optString hands back the four-letter string "null" for a
@@ -5775,6 +5785,8 @@ public final class MSIMEInputService extends InputMethodService {
         // Space on a composing Zhuyin conversion is tone 1 or opens its list, as on a hardware keyboard; the commit command below would end the conversion and drop the pending syllable.
         if (session != 0 && view != null && ZhuyinInputPolicy.spaceIsEngineKey(zhuyinSchemeActive(),
                 InputViewValuePolicy.textOr(view, "spelling_symbols", "")) && character(' ', false)) return;
+        if (session != 0 && view != null && StrokeInputPolicy.spaceIsEngineKey(strokeSchemeActive(),
+                InputViewValuePolicy.textOr(view, "spelling_symbols", "")) && character(' ', false)) return;
         JSONObject spaceDecision = smartPunctuationDecision(' ', getTextBeforeCursor());
         if (spaceDecision != null && !spaceDecision.isNull("space_ascii")) {
             int ascii = InputViewValuePolicy.integer(spaceDecision, "space_ascii", 0);
@@ -5842,6 +5854,11 @@ public final class MSIMEInputService extends InputMethodService {
     private boolean zhuyinSchemeActive() {
         return view != null
             && ZhuyinInputPolicy.active(InputViewValuePolicy.scheme(view, -1), dedicatedEnglish);
+    }
+
+    private boolean strokeSchemeActive() {
+        return view != null
+            && StrokeInputPolicy.active(InputViewValuePolicy.scheme(view, -1), dedicatedEnglish);
     }
 
     /** A Stroke composition whose glyphs the editor holds as its composing region (apply marks View.reading for Stroke). */

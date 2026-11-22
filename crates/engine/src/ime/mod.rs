@@ -311,6 +311,22 @@ impl ImeSession {
         self.registry.cantonese_dictionary_word(key, text)
     }
 
+    /// 当前笔画组合末尾是否可以继续插入词组分隔符（`'` 或空格）。
+    pub fn stroke_accepts_delimiter(&self) -> bool {
+        self.scheme
+            .as_stroke()
+            .is_some_and(crate::stroke::StrokeScheme::can_push_delimiter)
+    }
+
+    /// 笔画上屏后的联想续写词条。
+    pub fn stroke_next_words(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Vec<crate::language_dictionary::LanguageEntry> {
+        self.registry.stroke_next_words(prefix, limit)
+    }
+
     /// 会话允许运行的方案。
     pub fn enabled_schemes(&self) -> SchemeSet {
         self.registry.enabled()

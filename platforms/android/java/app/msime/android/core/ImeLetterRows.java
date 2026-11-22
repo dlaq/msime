@@ -824,6 +824,7 @@ final class ImeLetterRows {
         s.nineKeySymbolKey = null;
         s.imeLayoutRows.forgetNineKeyGrid();
         s.strokeWildcardKey = null;
+        s.strokeSeparatorKey = null;
         s.japaneseSpaceKey = null;
         s.japaneseReturnKey = null;
         s.japaneseSymbolsKey = null;

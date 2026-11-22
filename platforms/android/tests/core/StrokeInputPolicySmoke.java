@@ -24,6 +24,15 @@ public final class StrokeInputPolicySmoke {
             "the editor shows the stroke glyphs, never the letters");
         check("".equals(KoreanInputPolicy.composing(marksReading, "", "", "")),
             "nothing is marked once the composition is gone");
-        System.out.println("Android stroke input policy: activity and the inline reading passed");
+
+        check(StrokeInputPolicy.isEngineKey(true, '\'', "' ")
+            && StrokeInputPolicy.spaceIsEngineKey(true, "' "),
+            "Stroke claims apostrophe and space while composing with candidates");
+        check(!StrokeInputPolicy.isEngineKey(true, ',', "' ")
+            && !StrokeInputPolicy.spaceIsEngineKey(true, "'")
+            && !StrokeInputPolicy.spaceIsEngineKey(false, "' ")
+            && !StrokeInputPolicy.isEngineKey(true, '\'', ""),
+            "other punctuation, idle state and non-stroke schemes are not claimed");
+        System.out.println("Android stroke input policy: activity, engine keys and the inline reading passed");
     }
 }

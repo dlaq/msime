@@ -10140,7 +10140,7 @@ fn stroke_letters_compose_and_digits_select() {
     assert_eq!(typed.view.preedit, "一丨");
     assert_eq!(typed.view.reading, "一丨");
     assert_eq!(texts(&typed.view), ["十", "土"]);
-    assert_eq!(typed.view.spelling_symbols, "");
+    assert_eq!(typed.view.spelling_symbols, "' ");
     assert!(!typed.view.candidate_list_open);
     assert!(typed.view.chinese_text);
     assert!(!typed.view.script_conversion);
@@ -10271,8 +10271,11 @@ fn stroke_punctuation_commits_the_top_row_then_the_mark() {
     assert_eq!(question.commit.as_deref(), Some("大？"));
     assert_eq!(question.view.editing_text, "");
 
-    // The apostrophe separates no syllables under Stroke, so it is punctuation like the rest: the Windows Server and the Linux hosts send it here rather than as composition input.
+    // While composing, apostrophe acts as a stroke phrase segment separator; idle (or right after a delimiter), it behaves as punctuation.
     compose_stroke(&mut runtime, "pn");
+    let separator = runtime.dispatch(Action::Punctuation(b'\'')).unwrap();
+    assert!(separator.handled && separator.commit.is_none());
+    assert_eq!(separator.view.editing_text, "pn'");
     let apostrophe = runtime.dispatch(Action::Punctuation(b'\'')).unwrap();
     assert!(apostrophe.handled);
     let written = apostrophe.commit.unwrap();
@@ -10281,6 +10284,69 @@ fn stroke_punctuation_commits_the_top_row_then_the_mark() {
         "{written}"
     );
     assert_eq!(apostrophe.view.editing_text, "");
+}
+
+#[test]
+fn stroke_phrase_via_space_and_apostrophe_through_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = stroke_dictionary(directory.path());
+    rusqlite::Connection::open(&db_path)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO entries VALUES\
+             ('phshzpn', '我', 9500),\
+             ('phshzpn psnsz', '我们', 9999),\
+             ('pn pn', '人人', 7500),\
+             ('pnhhzn hpsn pnhhzn', '会不会', 9900);",
+        )
+        .unwrap();
+    let mut options = real_engine_options(directory.path());
+    options.scheme = STROKE_SCHEME;
+    options.stroke_dictionary = db_path;
+    let session = msime_engine::host::Session::new(&options).unwrap();
+    let mut runtime = Runtime::new(session, 5).unwrap();
+    runtime.focus(true).unwrap();
+
+    // 1. Space (`Action::SelectHighlighted`) on `ph` inserts delimiter, second Space commits `我`.
+    let typed = compose_stroke(&mut runtime, "ph");
+    assert_eq!(typed.view.spelling_symbols, "' ");
+    let first_space = runtime.dispatch(Action::SelectHighlighted).unwrap();
+    assert!(first_space.handled && first_space.commit.is_none());
+    assert_eq!(first_space.view.editing_text, "ph'");
+    assert_eq!(first_space.view.spelling_symbols, "");
+    assert_eq!(texts(&first_space.view), ["我", "我们"]);
+    let second_space = runtime.dispatch(Action::SelectHighlighted).unwrap();
+    assert_eq!(second_space.commit.as_deref(), Some("我"));
+
+    // 2. `ph` + Space + `ps` matches `我们`, Space -> trailing `'`, Space -> commits `我们`.
+    compose_stroke(&mut runtime, "ph");
+    runtime.dispatch(Action::SelectHighlighted).unwrap();
+    let phrase = compose_stroke(&mut runtime, "ps");
+    assert_eq!(phrase.view.editing_text, "ph'ps");
+    assert_eq!(texts(&phrase.view), ["我们"]);
+    let trailing = runtime.dispatch(Action::SelectHighlighted).unwrap();
+    assert!(trailing.handled && trailing.commit.is_none());
+    let committed = runtime.dispatch(Action::SelectHighlighted).unwrap();
+    assert_eq!(committed.commit.as_deref(), Some("我们"));
+
+    // 3. Punctuation / PunctuationAscii / Character `'` all segment phrases, and `pn'pn` returns `人人`.
+    compose_stroke(&mut runtime, "pn");
+    let sep = runtime.dispatch(Action::Punctuation(b'\'')).unwrap();
+    assert_eq!(sep.view.editing_text, "pn'");
+    let renren = compose_stroke(&mut runtime, "pn");
+    assert_eq!(texts(&renren.view), ["人人"]);
+    runtime.dispatch(Action::Command(Command::Cancel)).unwrap();
+
+    compose_stroke(&mut runtime, "pn");
+    runtime.dispatch(Action::PunctuationAscii(b'\'')).unwrap();
+    let dynamic = compose_stroke(&mut runtime, "hs");
+    assert_eq!(texts(&dynamic.view), ["人十", "人土"]);
+    runtime.dispatch(Action::Command(Command::Cancel)).unwrap();
+
+    compose_stroke(&mut runtime, "ph");
+    character(&mut runtime, b'\'');
+    let via_char = compose_stroke(&mut runtime, "ps");
+    assert_eq!(texts(&via_char.view), ["我们"]);
 }
 
 /// Picking a lower row again and again does not lift it, and nothing the user picks is written to any database.

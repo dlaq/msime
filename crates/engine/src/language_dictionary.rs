@@ -320,8 +320,34 @@ impl LanguageDictionary {
         limit: usize,
         result: &mut Vec<(String, LanguageEntry)>,
     ) -> Result<()> {
+        self.lookup_stroke_segments_into(segments, wildcard, true, limit, result)
+    }
+
+    /// 笔画输入末尾刚键入分隔符时的词组续写预览：词组字数为 `segments.len() + 1`，前 `segments.len()` 个字分别匹配各段笔画前缀。
+    pub fn lookup_stroke_phrase_continuations_into(
+        &self,
+        segments: &[&str],
+        wildcard: char,
+        limit: usize,
+        result: &mut Vec<(String, LanguageEntry)>,
+    ) -> Result<()> {
+        self.lookup_stroke_segments_into(segments, wildcard, false, limit, result)
+    }
+
+    fn lookup_stroke_segments_into(
+        &self,
+        segments: &[&str],
+        wildcard: char,
+        exact_count: bool,
+        limit: usize,
+        result: &mut Vec<(String, LanguageEntry)>,
+    ) -> Result<()> {
         result.clear();
-        if segments.len() < 2 || limit == 0 || segments.iter().any(|segment| segment.is_empty()) {
+        let min_segments = if exact_count { 2 } else { 1 };
+        if segments.len() < min_segments
+            || limit == 0
+            || segments.iter().any(|segment| segment.is_empty())
+        {
             return Ok(());
         }
         let mut pattern = String::new();
@@ -331,7 +357,7 @@ impl LanguageDictionary {
             }
             for character in segment.chars() {
                 if character == wildcard {
-                    pattern.push_str("[^ ]");
+                    pattern.push('?');
                 } else if matches!(character, 'h' | 's' | 'p' | 'n' | 'z') {
                     pattern.push(character);
                 } else {
@@ -340,25 +366,87 @@ impl LanguageDictionary {
                     return Ok(());
                 }
             }
-            // Keep the match inside this character's code. The final `*` is deliberately
-            // not used: SQLite GLOB's `*` would also consume the following spaces.
-            pattern.push_str("[^ ]*");
+            pattern.push('*');
         }
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut statement = self.connection.prepare_cached(
-            "SELECT key, text, weight FROM entries WHERE key GLOB ?1 ORDER BY weight DESC, text ASC LIMIT ?2",
-        )?;
-        let rows = statement.query_map((pattern.as_str(), limit), |row| {
-            Ok((
-                row.get(0)?,
-                LanguageEntry {
-                    text: row.get(1)?,
-                    weight: row.get(2)?,
-                },
-            ))
-        })?;
-        result.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        if !exact_count {
+            pattern.push_str(" *");
+        }
+        let expected_spaces = i64::try_from(if exact_count {
+            segments.len() - 1
+        } else {
+            segments.len()
+        })
+        .unwrap_or(i64::MAX);
+        let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let literal = segments[0].split(wildcard).next().unwrap_or_default();
+        let capacity = query_capacity(limit);
+        match completion_upper_bound(literal) {
+            Some(upper) => {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT key, text, weight FROM entries WHERE key >= ?1 AND key < ?2 AND key GLOB ?3 AND (length(key) - length(replace(key, ' ', ''))) = ?4 ORDER BY weight DESC, text ASC LIMIT ?5",
+                )?;
+                let mut rows = statement.query((
+                    literal,
+                    upper,
+                    pattern.as_str(),
+                    expected_spaces,
+                    sql_limit,
+                ))?;
+                read_matching_stroke_rows_into(
+                    &mut rows,
+                    segments,
+                    wildcard,
+                    exact_count,
+                    result,
+                    capacity,
+                )?;
+            }
+            None => {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT key, text, weight FROM entries WHERE key GLOB ?1 AND (length(key) - length(replace(key, ' ', ''))) = ?2 ORDER BY weight DESC, text ASC LIMIT ?3",
+                )?;
+                let mut rows = statement.query((pattern.as_str(), expected_spaces, sql_limit))?;
+                read_matching_stroke_rows_into(
+                    &mut rows,
+                    segments,
+                    wildcard,
+                    exact_count,
+                    result,
+                    capacity,
+                )?;
+            }
+        }
         Ok(())
+    }
+
+    /// 笔画上屏后联想：查找以 `prefix` 开头的更长词条，按权重降序返回去重后的后缀片段，至多 `limit` 条。
+    pub fn lookup_stroke_next_words(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<LanguageEntry>> {
+        if prefix.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let sql_limit = i64::try_from(limit.saturating_mul(4).max(32)).unwrap_or(i64::MAX);
+        let mut results = Vec::with_capacity(limit.min(32));
+        match text_prefix_upper_bound(prefix) {
+            Some(upper) => {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT text, weight FROM entries WHERE text >= ?1 AND text < ?2 AND length(text) > length(?1) ORDER BY weight DESC, text ASC LIMIT ?3",
+                )?;
+                let mut rows = statement.query((prefix, upper, sql_limit))?;
+                collect_next_word_rows(&mut rows, prefix, limit, &mut results)?;
+            }
+            None => {
+                let mut statement = self.connection.prepare_cached(
+                    "SELECT text, weight FROM entries WHERE text >= ?1 AND length(text) > length(?1) ORDER BY weight DESC, text ASC LIMIT ?2",
+                )?;
+                let mut rows = statement.query((prefix, sql_limit))?;
+                collect_next_word_rows(&mut rows, prefix, limit, &mut results)?;
+            }
+        }
+        Ok(results)
     }
 
     /// 键按位置逐段取自 `positions[i]`（以单个空格连接）的词条，各带自己的键；按权重从重到轻，再按文字、键排序，至多 `limit` 条。每个位置都只有一个读音时就是 `lookup` 对连接后的键查询，结果与它逐条相同。
@@ -620,6 +708,123 @@ fn completion_upper_bound(prefix: &str) -> Option<String> {
     upper.push_str(head);
     upper.push(next);
     Some(upper)
+}
+
+fn text_prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut index = prefix.len();
+    while index > 0 {
+        let character = prefix[..index].chars().next_back()?;
+        index -= character.len_utf8();
+        let code = u32::from(character);
+        let next = if code == 0xD7FF {
+            char::from_u32(0xE000)
+        } else {
+            char::from_u32(code + 1)
+        };
+        if let Some(next) = next {
+            let mut upper = String::with_capacity(index + next.len_utf8());
+            upper.push_str(&prefix[..index]);
+            upper.push(next);
+            return Some(upper);
+        }
+    }
+    None
+}
+
+fn stroke_segment_matches(part: &str, segment: &str, wildcard: char) -> bool {
+    let mut actual = part.chars();
+    for expected in segment.chars() {
+        let Some(ch) = actual.next() else {
+            return false;
+        };
+        if expected != wildcard && expected != ch {
+            return false;
+        }
+    }
+    true
+}
+
+fn stroke_segments_match(key: &str, segments: &[&str], wildcard: char, exact_count: bool) -> bool {
+    let mut parts = key.split(' ');
+    for segment in segments {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if !stroke_segment_matches(part, segment, wildcard) {
+            return false;
+        }
+    }
+    !exact_count || parts.next().is_none()
+}
+
+fn read_matching_stroke_rows_into(
+    rows: &mut rusqlite::Rows<'_>,
+    segments: &[&str],
+    wildcard: char,
+    exact_count: bool,
+    result: &mut Vec<(String, LanguageEntry)>,
+    capacity: Option<usize>,
+) -> rusqlite::Result<()> {
+    let mut length = 0;
+    while let Some(row) = rows.next()? {
+        let key = row.get_ref(0)?.as_str().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+        })?;
+        if !stroke_segments_match(key, segments, wildcard, exact_count) {
+            continue;
+        }
+        let text = row.get_ref(1)?.as_str().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(1, Type::Text, Box::new(error))
+        })?;
+        let weight = row.get(2)?;
+        reserve_query_capacity(result, length, capacity);
+        if let Some((existing_key, entry)) = result.get_mut(length) {
+            existing_key.clear();
+            existing_key.push_str(key);
+            entry.text.clear();
+            entry.text.push_str(text);
+            entry.weight = weight;
+        } else {
+            result.push((
+                key.to_owned(),
+                LanguageEntry {
+                    text: text.to_owned(),
+                    weight,
+                },
+            ));
+        }
+        length += 1;
+    }
+    result.truncate(length);
+    Ok(())
+}
+
+fn collect_next_word_rows(
+    rows: &mut rusqlite::Rows<'_>,
+    prefix: &str,
+    limit: usize,
+    results: &mut Vec<LanguageEntry>,
+) -> rusqlite::Result<()> {
+    while let Some(row) = rows.next()? {
+        let text = row.get_ref(0)?.as_str().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+        })?;
+        let Some(suffix) = text.strip_prefix(prefix) else {
+            continue;
+        };
+        if suffix.is_empty() || results.iter().any(|entry| entry.text == suffix) {
+            continue;
+        }
+        let weight = row.get(1)?;
+        results.push(LanguageEntry {
+            text: suffix.to_owned(),
+            weight,
+        });
+        if results.len() >= limit {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn query_capacity(limit: usize) -> Option<usize> {
@@ -1296,6 +1501,104 @@ mod tests {
         assert_eq!(
             message(open_read_only(&no_metadata).err().unwrap()),
             diagnostics::LANGUAGE_DICTIONARY_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn stroke_phrase_queries_match_exact_segments_wildcards_continuations_and_next_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("msime-stroke.db");
+        build(&path, &FORMAT_VERSION.to_string());
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS entries_by_text_weight ON entries(text, weight DESC);\
+                 DELETE FROM entries;\
+                 INSERT INTO entries VALUES\
+                 ('pn', '人', 9000),\
+                 ('pn pn', '人人', 8000),\
+                 ('pnhhzn hpsn pnhhzn', '会不会', 9900),\
+                 ('phshzpn', '我', 9500),\
+                 ('phshzpn psnsz', '我们', 9700),\
+                 ('phshzpn psnsz hsh', '我们的', 9600),\
+                 ('phhshs szhs hhpz pshspn', '年中无休', 9800),\
+                 ('phshzpn hhh', '我三', 4000);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let dictionary = open_read_only(&path).unwrap();
+        let mut rows = Vec::new();
+        dictionary
+            .lookup_stroke_phrase_into(&["pn", "pn"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["人人"]
+        );
+
+        dictionary
+            .lookup_stroke_phrase_into(&["ph", "ps"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["我们"]
+        );
+
+        dictionary
+            .lookup_stroke_phrase_into(&["px", "ps"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["我们"]
+        );
+
+        dictionary
+            .lookup_stroke_phrase_into(&["xp", "ps"], 'x', 20, &mut rows)
+            .unwrap();
+        assert!(rows.is_empty());
+        dictionary
+            .lookup_stroke_phrase_into(&["xh", "ps"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["我们"]
+        );
+
+        dictionary
+            .lookup_stroke_phrase_continuations_into(&["ph"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["我们", "我三"]
+        );
+
+        dictionary
+            .lookup_stroke_phrase_continuations_into(&["ph", "ps"], 'x', 20, &mut rows)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(_, entry)| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["我们的"]
+        );
+
+        let next = dictionary.lookup_stroke_next_words("我", 10).unwrap();
+        assert_eq!(
+            next.iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["们", "们的", "三"]
         );
     }
 }

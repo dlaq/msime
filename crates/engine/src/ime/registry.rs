@@ -20,7 +20,7 @@ use crate::japanese::matrix::BestPath;
 use crate::japanese::provider::WholeReadingLemma;
 use crate::japanese::JapaneseProvider;
 use crate::korean::hanja;
-use crate::language_dictionary::{self, LanguageDictionary};
+use crate::language_dictionary::{self, LanguageDictionary, LanguageEntry};
 use crate::paths::RuntimePaths;
 use crate::quanpin::QuanpinEngine;
 use crate::shuangpin::{ShuangpinEngine, ShuangpinProfile};
@@ -604,6 +604,14 @@ impl ProviderRegistry {
                 item
             }));
         }
+    }
+
+    /// 笔画上屏后联想：只读 `msime-stroke.db` 的前缀续写词条，不写入任何用户词库。
+    pub(crate) fn stroke_next_words(&self, prefix: &str, limit: usize) -> Vec<LanguageEntry> {
+        self.stroke
+            .as_ref()
+            .and_then(|dictionary| dictionary.lookup_stroke_next_words(prefix, limit).ok())
+            .unwrap_or_default()
     }
 }
 

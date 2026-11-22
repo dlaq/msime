@@ -15,4 +15,15 @@ public final class StrokeInputPolicy {
     public static boolean active(int scheme, boolean dedicatedEnglish) {
         return InputSchemeTraits.active(scheme, STROKE_SCHEME, dedicatedEnglish);
     }
+
+    /** Whether an ASCII key (such as {@code '\''} or {@code ' '}) is currently claimed by the Engine as a stroke phrase separator via {@code View.spelling_symbols}. */
+    public static boolean isEngineKey(boolean stroke, int unicode, String spellingSymbols) {
+        if (!stroke || unicode < 32 || unicode > 126 || spellingSymbols == null) return false;
+        return spellingSymbols.indexOf((char) unicode) >= 0;
+    }
+
+    /** Whether touch Space inserts the stroke phrase separator instead of committing/inserting a literal space. */
+    public static boolean spaceIsEngineKey(boolean stroke, String spellingSymbols) {
+        return isEngineKey(stroke, ' ', spellingSymbols);
+    }
 }

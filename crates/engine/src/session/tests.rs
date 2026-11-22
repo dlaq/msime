@@ -11689,7 +11689,7 @@ fn stroke_composes_glyphs_from_its_keys() {
     assert_eq!(snapshot.normalized_segmentation, "一丨");
     assert_eq!(snapshot.editing_text, "hs");
     assert_eq!(snapshot.caret_position, 2);
-    assert_eq!(snapshot.spelling_symbols, "");
+    assert_eq!(snapshot.spelling_symbols, "' ");
     assert_eq!(words(&session), ["十", "土"]);
     assert!(session
         .snapshot()
@@ -11724,15 +11724,96 @@ fn stroke_phrase_input_uses_apostrophe_or_space_as_a_segment_separator() {
     assert!(session.punctuation(b'\'').handled);
     assert_eq!(session.snapshot().editing_text, "ph'");
     assert_eq!(session.snapshot().preedit, "丿一'");
+    assert_eq!(session.snapshot().spelling_symbols, "");
     type_text(&mut session, "ps");
     assert_eq!(words(&session), ["我们"]);
     assert_eq!(session.select(0).commit.as_deref(), Some("我们"));
+
+    // 词库中有匹配候选时，空格（CommitCandidate）插入分隔符；末尾分隔符下再按空格直接上屏首候选；不收录的组合动态造句并保留空格字符路径。
+    let connection = Connection::open(fixture.path().join("msime-stroke.db")).unwrap();
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS entries_by_text_weight ON entries(text, weight DESC);\
+             INSERT INTO entries VALUES ('phshzpn', '我', 9500), ('pn pn', '人人', 7500), ('pnhhzn hpsn pnhhzn', '会不会', 9900);",
+        )
+        .unwrap();
+    drop(connection);
 
     type_text(&mut session, "ph");
     assert!(session.command(Command::CommitCandidate).handled);
     assert_eq!(session.snapshot().editing_text, "ph'");
     type_text(&mut session, "ps");
     assert_eq!(words(&session), ["我们"]);
+    assert!(session.command(Command::Cancel).handled);
+
+    type_text(&mut session, "ph");
+    assert!(session.character(b' ', false).handled);
+    assert_eq!(session.snapshot().editing_text, "ph'");
+    assert_eq!(words(&session), ["我", "我们"]);
+    assert_eq!(
+        session.command(Command::CommitCandidate).commit.as_deref(),
+        Some("我")
+    );
+
+    type_text(&mut session, "pn");
+    assert!(session.character(b' ', false).handled);
+    type_text(&mut session, "pn");
+    assert_eq!(words(&session), ["人人"]);
+    assert!(session.command(Command::Cancel).handled);
+
+    type_text(&mut session, "pn");
+    assert!(session.character(b'\'', false).handled);
+    type_text(&mut session, "hs");
+    assert_eq!(words(&session), ["人十", "人土"]);
+    assert!(session.command(Command::Cancel).handled);
+
+    // 光标移动后也可插入合法的词组分隔符。
+    type_text(&mut session, "phps");
+    assert!(session.command(Command::MoveLeft).handled);
+    assert!(session.command(Command::MoveLeft).handled);
+    assert!(session.character(b'\'', false).handled);
+    assert_eq!(session.snapshot().editing_text, "ph'ps");
+    assert_eq!(words(&session), ["我们"]);
+    assert!(session.command(Command::Cancel).handled);
+}
+
+#[test]
+fn stroke_next_word_prediction_suggests_continuations_without_learning() {
+    let fixture = Fixture::new(QUANPIN_FIXTURE);
+    let stroke = stroke_dictionary(fixture.path());
+    let connection = Connection::open(&stroke).unwrap();
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS entries_by_text_weight ON entries(text, weight DESC);\
+             INSERT INTO entries VALUES ('phshzpn', '我', 9500), ('phshzpn psnsz hsh', '我们的', 9600);",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut session = fixture.session_with(|options| {
+        options.scheme = SchemeType::Stroke;
+        options.stroke_dictionary = stroke.clone();
+        options.next_word_prediction = true;
+        options.learning = true;
+        options.personal_context = true;
+    });
+    let journal = table_counts(&fixture.journal());
+    let main = table_counts(&fixture.main_db());
+
+    type_text(&mut session, "ph");
+    assert_eq!(session.select(0).commit.as_deref(), Some("我"));
+    let predicted = session.snapshot();
+    assert!(predicted.prediction);
+    assert_eq!(words(&session), ["们", "们的"]);
+    let chained = session.select(0);
+    assert_eq!(chained.commit.as_deref(), Some("们"));
+    assert_eq!(words(&session), ["的"]);
+    assert!(session.command(Command::Cancel).handled);
+
+    drop(session);
+    crate::flush_personal_learning();
+    assert_eq!(table_counts(&fixture.journal()), journal);
+    assert_eq!(table_counts(&fixture.main_db()), main);
 }
 
 #[test]

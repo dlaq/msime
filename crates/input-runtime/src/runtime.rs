@@ -4253,9 +4253,11 @@ impl<E: InputEngine> Runtime<E> {
                     self.engine.glide(keyboard, points)
                 }
             }
-            // A scheme that spells with Space lists it among its spelling symbols (Zhuyin's first tone, or opening its list with no syllable pending), and then the Space command is that key rather than a pick of the highlighted row.
+            // A scheme that spells with Space lists it among its spelling symbols (Zhuyin's first tone, or opening its list with no syllable pending, or Stroke phrase delimiter on the first row), and then the Space command is that key rather than a pick of the highlighted row.
             Action::SelectHighlighted
-                if self.cached.spelling_symbols.as_bytes().contains(&b' ') =>
+                if self.cached.spelling_symbols.as_bytes().contains(&b' ')
+                    && (scheme_type(self.cached.scheme) != Some(SchemeType::Stroke)
+                        || self.highlighted == 0) =>
             {
                 self.engine.character(b' ', false)
             }

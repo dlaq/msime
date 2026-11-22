@@ -906,7 +906,13 @@ final class ImeLayoutRows {
             grid.addView(row, LayoutPolicy.weightedWidthParams(1));
         }
         LinearLayout lastRow = LayoutPolicy.row(s);
-        Button symbolsKey = s.keyId(s.keyboardKey("@#", "符号", s.imePanels::showSymbolPanel), KeyPressIds.forNineKeyDigit(1));
+        Button symbolsKey = s.keyId(s.keyboardKey(
+            StrokeKeyboardLayout.symbolOrSeparatorFace(s.hasEngineComposition()),
+            StrokeKeyboardLayout.symbolOrSeparatorDescription(s.hasEngineComposition()),
+            this::strokeSymbolOrSeparatorKey), KeyPressIds.forNineKeyDigit(1));
+        KeyboardTypographyPolicy.setFittedKeyTextSize(symbolsKey, 14,
+            KeyboardTypographyPolicy.NINE_KEY_LABEL_TEXT_SP);
+        s.strokeSeparatorKey = symbolsKey;
         Button zero = s.keyId(s.keyboardKey("0", "数字 0", () -> commitNineKeyLiteral("0")), "Nine0");
         String periodFace = ChineseSymbolFaces.face(".", s.sendsChinesePunctuation());
         Button period = s.keyId(s.keyboardKey(periodFace, "句点", this::commitNineKeyPeriod), "Period");
@@ -1119,6 +1125,19 @@ final class ImeLayoutRows {
         s.character(key.input(), false);
     }
 
+    /** 笔画左下键：空组合打开符号面板，组字中发送分词撇号，照应语燕、搜狗、百度等笔画键盘的分词键习惯。 */
+    void strokeSymbolOrSeparatorKey() {
+        if (s.connection == null) return;
+        if (s.hasEngineComposition()) {
+            String editing = s.view == null ? "" : InputViewValuePolicy.editingText(s.view);
+            if (StrokeKeyboardLayout.canSeparate(editing)) {
+                s.character(StrokeKeyboardLayout.SEPARATOR, false);
+            }
+            return;
+        }
+        s.imePanels.showSymbolPanel();
+    }
+
     /**
      * 拼音九键的 1 键：组字时是「分词」，把 ' 送给引擎，在已打的数字末尾定一个音节分界，只定在哪里断、不定是哪个拼音：94 分词 26 仍可以是 xi'an（西安）或 yi'an，但不再是 xian（先）；读音栏显示成 94'26，⌫ 先删分界再删数字。没在组字时是「@#」，把当前模式的常用标点放进候选条（{@link ImeNineKeyQuickPunctuation}），符号面板改从底行最左边的 符 打开。
      */
@@ -1148,9 +1167,24 @@ final class ImeLayoutRows {
     }
 
     void updateStrokeWildcardKey() {
-        if (s.strokeWildcardKey == null) return;
-        ViewPolicy.setEnabled(s.strokeWildcardKey,
-            StrokeKeyboardLayout.sends(StrokeKeyboardLayout.WILDCARD, s.hasEngineComposition()));
+        boolean composing = s.hasEngineComposition();
+        if (s.strokeWildcardKey != null) {
+            ViewPolicy.setEnabled(s.strokeWildcardKey,
+                StrokeKeyboardLayout.sends(StrokeKeyboardLayout.WILDCARD, composing));
+        }
+        if (s.strokeSeparatorKey != null) {
+            String editing = s.view == null ? "" : InputViewValuePolicy.editingText(s.view);
+            String face = StrokeKeyboardLayout.symbolOrSeparatorFace(composing);
+            if (!face.contentEquals(s.strokeSeparatorKey.getText())) {
+                s.strokeSeparatorKey.setText(face);
+            }
+            String description = "按键 " + StrokeKeyboardLayout.symbolOrSeparatorDescription(composing);
+            if (!description.contentEquals(s.strokeSeparatorKey.getContentDescription())) {
+                s.strokeSeparatorKey.setContentDescription(description);
+            }
+            ViewPolicy.setEnabled(s.strokeSeparatorKey,
+                !composing || StrokeKeyboardLayout.canSeparate(editing));
+        }
     }
 
     /** 拼音九键的四向 flick 和长按拖选由独立监听器接管。 */
